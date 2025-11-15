@@ -259,6 +259,370 @@
 
 // module.exports = router;
 
+// const express = require("express");
+// const multer = require("multer");
+// const fs = require("fs");
+// const path = require("path");
+// const router = express.Router();
+// const FoodEntry = require("../models/FoodEntry");
+// const UserProfile = require("../models/UserProfile");
+// const OpenAI = require("openai");
+
+// // 🔑 FIX: Configured to use Groq API by setting the baseURL
+// const client = new OpenAI({
+//   apiKey: process.env.GROQ_API_KEY,
+//   baseURL: "https://api.groq.com/openai/v1",
+// });
+
+// /* ------------------ MULTER CONFIG ------------------ */
+// const storage = multer.diskStorage({
+//   destination: (req, file, cb) => {
+//     const dir = "uploads/";
+//     // Ensure the uploads directory exists
+//     if (!fs.existsSync(dir)) {
+//       fs.mkdirSync(dir);
+//     }
+//     cb(null, dir);
+//   },
+//   filename: (req, file, cb) => cb(null, Date.now() + "-" + file.originalname),
+// });
+// const upload = multer({ storage });
+
+// /* ------------------ JSON CLEANER ------------------ */
+// // Helper to extract JSON object from potentially messy AI text response
+// const extractJSON = (text) => {
+//   try {
+//     const match = text.match(/\{[\s\S]*\}/);
+//     return match ? JSON.parse(match[0]) : null;
+//   } catch (e) {
+//     console.error("JSON extraction failed:", e.message);
+//     return null;
+//   }
+// };
+
+// /* ------------------ AI HELPERS ------------------ */
+// const askAIForNutrition = async (input) => {
+//   const prompt = `You are a nutrition expert and if quantity is not specified, assume a standard serving size in indian village area take minium value in grams.
+
+// Provide approximate nutrition values in grams for this food. like if bowl is not mentioned then assume smallest bowl size. if food name is not clear what is content for example daal then take daal which has minimum protien. like this assume minimum values.
+
+// Return ONLY JSON (no text) like:
+// {"calories":200,"protein":10,"fat":5,"carbs":30,"sugar":2,"calcium":20}
+
+// Food: ${input}`;
+
+//   const response = await client.chat.completions.create({
+//     model: "openai/gpt-oss-20b", // Groq's Llama 3 model
+//     messages: [{ role: "user", content: prompt }],
+//   });
+
+//   return extractJSON(response.choices[0].message.content);
+// };
+
+// const askAIForLabel = async (text) => {
+//   const prompt = `
+// Provide title + health tag ONLY in JSON.
+
+// Example:
+// {"label":"Chapati With Omelette","healthTag":"good_to_have","reason":"Balanced protein & carbs"}
+
+// Food: ${text}
+// `;
+
+//   const response = await client.chat.completions.create({
+//     model: "openai/gpt-oss-20b", // Groq's Llama 3 model
+//     messages: [{ role: "user", content: prompt }],
+//   });
+
+//   return extractJSON(response.choices[0].message.content);
+// };
+
+// /* =========================================================
+//   1️⃣ ADD FOOD (JSON / IMAGE / CUSTOM TEXT)
+// ========================================================= */
+// router.post("/addFood", upload.single("image"), async (req, res) => {
+//   const fileUploaded = !!req.file;
+
+//   const cleanupFile = () => {
+//     if (fileUploaded)
+//       fs.unlink(req.file.path, (e) => {
+//         if (e) console.error("Failed to delete temp file:", e);
+//       });
+//   };
+
+//   try {
+//     const body = req.body;
+//     const { userId } = body;
+
+//     if (!userId) {
+//       cleanupFile();
+//       return res.status(400).json({ error: "userId required" });
+//     }
+
+//     let aiResult;
+//     let labelData;
+//     let foodName = "Food Item";
+//     let sourceType;
+
+//     // ✅ JSON input
+//     if (body.foodData) {
+//       try {
+//         aiResult = JSON.parse(body.foodData);
+//         labelData = await askAIForLabel(body.foodData);
+//         foodName = `Custom JSON Food: ${labelData?.label || "Unknown"}`;
+//         sourceType = "json";
+//       } catch (e) {
+//         cleanupFile();
+//         return res
+//           .status(400)
+//           .json({ error: "foodData field is not valid JSON string" });
+//       }
+//     }
+//     // ✅ Text input
+//     else if (body.customText) {
+//       aiResult = await askAIForNutrition(body.customText);
+//       labelData = await askAIForLabel(body.customText);
+//       foodName = body.customText;
+//       sourceType = "text";
+//     }
+//     // ✅ Image input
+//     else if (req.file) {
+//       // NOTE: Groq's Llama 3 is text-only. It cannot see the image content.
+//       // We pass the filename/a generic prompt for analysis.
+//       aiResult = await askAIForNutrition(
+//         "Food image uploaded with filename: " + req.file.originalname
+//       );
+//       labelData = await askAIForLabel("Food from image");
+//       foodName = "Image Food";
+//       sourceType = "image";
+//     } else {
+//       cleanupFile();
+//       return res
+//         .status(400)
+//         .json({ error: "Provide foodData (JSON), customText, or an image." });
+//     }
+
+//     // --- Validation and Fallback ---
+//     if (!aiResult) {
+//       cleanupFile();
+//       return res
+//         .status(400)
+//         .json({ error: "AI failed to return nutrition JSON. Try rephrasing." });
+//     }
+//     if (!labelData) {
+//       cleanupFile();
+//       return res
+//         .status(400)
+//         .json({ error: "AI failed to return label JSON. Try rephrasing." });
+//     }
+//     const entryCalories = aiResult.calories || 0;
+
+//     // --- Database Aggregation ---
+//     const today = new Date();
+//     const y = today.getFullYear();
+//     const m = today.getMonth() + 1;
+//     const d = today.getDate();
+
+//     let userFood = await FoodEntry.findOne({ userId });
+//     if (!userFood) userFood = new FoodEntry({ userId, nutritionByDate: [] });
+
+//     let yearData = userFood.nutritionByDate.find((e) => e.year === y);
+//     if (!yearData) {
+//       yearData = { year: y, months: [] };
+//       userFood.nutritionByDate.push(yearData);
+//     }
+
+//     let monthData = yearData.months.find((e) => e.month === m);
+//     if (!monthData) {
+//       monthData = { month: m, days: [] };
+//       yearData.months.push(monthData);
+//     }
+
+//     let dayData = monthData.days.find((e) => e.day === d);
+//     if (!dayData) {
+//       dayData = {
+//         day: d,
+//         calories: 0,
+//         protein: 0,
+//         fat: 0,
+//         carbs: 0,
+//         sugar: 0,
+//         calcium: 0,
+//         goodCalories: 0,
+//         badCalories: 0,
+//         foodItems: [],
+//       };
+//       monthData.days.push(dayData);
+//     }
+
+//     // ✅ Update daily totals
+//     for (const key in aiResult) {
+//       if (dayData.hasOwnProperty(key) && !isNaN(aiResult[key])) {
+//         dayData[key] = (dayData[key] || 0) + (aiResult[key] || 0);
+//       }
+//     }
+
+//     if (labelData.healthTag === "good_to_have")
+//       dayData.goodCalories += entryCalories;
+//     else dayData.badCalories += entryCalories;
+
+//     // ✅ Insert food entry
+//     const newFoodEntry = {
+//       name: foodName,
+//       label: labelData.label,
+//       healthTag: labelData.healthTag,
+//       ...aiResult,
+//       imageUrl: fileUploaded ? req.file.path : null,
+//       sourceType: sourceType,
+//     };
+
+//     dayData.foodItems.push(newFoodEntry);
+
+//     await userFood.save();
+
+//     cleanupFile();
+
+//     res.json({
+//       message: "✅ Food added successfully",
+//       addedItem: newFoodEntry,
+//       todaySummary: dayData,
+//     });
+//   } catch (err) {
+//     console.error("🔥 Error in /addFood:", err);
+//     cleanupFile();
+//     res.status(500).json({ error: err.message });
+//   }
+// });
+
+// /* =========================================================
+//   2️⃣ LIST FOOD
+// ========================================================= */
+// router.get("/listFood/:userId", async (req, res) => {
+//   const food = await FoodEntry.findOne({ userId: req.params.userId });
+//   res.json(food || { message: "No food data found for user" });
+// });
+
+// /* =========================================================
+//   3️⃣ GET CUSTOM DATE DATA
+// ========================================================= */
+// router.post("/getCustomDateData", async (req, res) => {
+//   try {
+//     const { userId, startDate, endDate } = req.body;
+
+//     if (!userId || !startDate)
+//       return res
+//         .status(400)
+//         .json({ error: "userId and startDate are required" });
+
+//     const [startDay, startMonth, startYear] = startDate.split("/").map(Number);
+//     const start = new Date(startYear, startMonth - 1, startDay);
+
+//     let end;
+//     if (endDate) {
+//       const [d, m, y] = endDate.split("/").map(Number);
+//       end = new Date(y, m - 1, d);
+//     } else {
+//       end = new Date(startYear, startMonth - 1, startDay);
+//     }
+
+//     end.setHours(23, 59, 59, 999);
+
+//     const data = await FoodEntry.findOne({ userId });
+//     if (!data) return res.json({ message: "No data found for user" });
+
+//     let total = {
+//       calories: 0,
+//       protein: 0,
+//       fat: 0,
+//       carbs: 0,
+//       sugar: 0,
+//       calcium: 0,
+//     };
+//     let tracker = 0;
+
+//     data.nutritionByDate.forEach((year) => {
+//       year.months.forEach((month) => {
+//         month.days.forEach((day) => {
+//           const entryDate = new Date(year.year, month.month - 1, day.day);
+
+//           if (entryDate >= start && entryDate <= end) {
+//             tracker++;
+//             for (let key in total) {
+//               total[key] += day[key] || 0;
+//             }
+//           }
+//         });
+//       });
+//     });
+
+//     if (tracker === 0)
+//       return res.json({ message: "No data found for given date range" });
+
+//     res.json({
+//       message: "✅ Data fetched successfully",
+//       userId,
+//       from: startDate,
+//       to: endDate || startDate,
+//       daysCount: tracker,
+//       totals: total,
+//     });
+//   } catch (err) {
+//     res.status(500).json({ error: err.message });
+//   }
+// });
+
+// /* =========================================================
+//   4️⃣ GET HOMEPAGE DATA (TODAY’S SUMMARY)
+// ========================================================= */
+// router.get("/dataHomepage/:userId", async (req, res) => {
+//   try {
+//     const { userId } = req.params;
+//     const today = new Date();
+//     const y = today.getFullYear();
+//     const m = today.getMonth() + 1;
+//     const d = today.getDate();
+
+//     const [profile, food] = await Promise.all([
+//       UserProfile.findOne({ userId }),
+//       FoodEntry.findOne({ userId }),
+//     ]);
+
+//     if (!profile) return res.json({ message: "Profile not found" });
+
+//     const yearData = food?.nutritionByDate.find((e) => e.year === y);
+//     const monthData = yearData?.months.find((e) => e.month === m);
+//     const dayData = monthData?.days.find((e) => e.day === d);
+
+//     const consumed = {
+//       calories: dayData?.calories || 0,
+//       protein: dayData?.protein || 0,
+//       fat: dayData?.fat || 0,
+//       carb: dayData?.carbs || 0,
+//     };
+
+//     const response = {
+//       userId,
+//       date: `${d}/${m}/${y}`,
+//       target: {
+//         calories: profile.targetCalorie,
+//         protein: profile.targetProtein,
+//         fat: profile.targetFat,
+//         carb: profile.targetCarb,
+//       },
+//       consumed: consumed,
+//     };
+
+//     res.json({
+//       message: "✅ Homepage data fetched successfully",
+//       data: response,
+//     });
+//   } catch (err) {
+//     res.status(500).json({ error: err.message });
+//   }
+// });
+
+// module.exports = router;
+
 const express = require("express");
 const multer = require("multer");
 const fs = require("fs");
@@ -266,9 +630,9 @@ const path = require("path");
 const router = express.Router();
 const FoodEntry = require("../models/FoodEntry");
 const UserProfile = require("../models/UserProfile");
+
 const OpenAI = require("openai");
 
-// 🔑 FIX: Configured to use Groq API by setting the baseURL
 const client = new OpenAI({
   apiKey: process.env.GROQ_API_KEY,
   baseURL: "https://api.groq.com/openai/v1",
@@ -278,10 +642,7 @@ const client = new OpenAI({
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     const dir = "uploads/";
-    // Ensure the uploads directory exists
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir);
-    }
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir);
     cb(null, dir);
   },
   filename: (req, file, cb) => cb(null, Date.now() + "-" + file.originalname),
@@ -289,7 +650,6 @@ const storage = multer.diskStorage({
 const upload = multer({ storage });
 
 /* ------------------ JSON CLEANER ------------------ */
-// Helper to extract JSON object from potentially messy AI text response
 const extractJSON = (text) => {
   try {
     const match = text.match(/\{[\s\S]*\}/);
@@ -302,17 +662,17 @@ const extractJSON = (text) => {
 
 /* ------------------ AI HELPERS ------------------ */
 const askAIForNutrition = async (input) => {
-  const prompt = `You are a nutrition expert and if quantity is not specified, assume a standard serving size in indian village area take minium value in grams.
+  const prompt = `
+You are a nutrition expert. If quantity not mentioned, assume smallest Indian village serving.
 
-Provide approximate nutrition values in grams for this food. like if bowl is not mentioned then assume smallest bowl size. if food name is not clear what is content for example daal then take daal which has minimum protien. like this assume minimum values.
-
-Return ONLY JSON (no text) like:
+Return ONLY JSON:
 {"calories":200,"protein":10,"fat":5,"carbs":30,"sugar":2,"calcium":20}
 
-Food: ${input}`;
+Food: ${input}
+`;
 
   const response = await client.chat.completions.create({
-    model: "openai/gpt-oss-20b", // Groq's Llama 3 model
+    model: "openai/gpt-oss-20b",
     messages: [{ role: "user", content: prompt }],
   });
 
@@ -321,16 +681,14 @@ Food: ${input}`;
 
 const askAIForLabel = async (text) => {
   const prompt = `
-Provide title + health tag ONLY in JSON.
-
-Example:
-{"label":"Chapati With Omelette","healthTag":"good_to_have","reason":"Balanced protein & carbs"}
+Return ONLY JSON:
+{"label":"Chapati","healthTag":"good_to_have","reason":"Balanced carbs"}
 
 Food: ${text}
 `;
 
   const response = await client.chat.completions.create({
-    model: "openai/gpt-oss-20b", // Groq's Llama 3 model
+    model: "openai/gpt-oss-20b",
     messages: [{ role: "user", content: prompt }],
   });
 
@@ -344,10 +702,11 @@ router.post("/addFood", upload.single("image"), async (req, res) => {
   const fileUploaded = !!req.file;
 
   const cleanupFile = () => {
-    if (fileUploaded)
+    if (fileUploaded) {
       fs.unlink(req.file.path, (e) => {
         if (e) console.error("Failed to delete temp file:", e);
       });
+    }
   };
 
   try {
@@ -359,65 +718,37 @@ router.post("/addFood", upload.single("image"), async (req, res) => {
       return res.status(400).json({ error: "userId required" });
     }
 
-    let aiResult;
-    let labelData;
-    let foodName = "Food Item";
-    let sourceType;
+    let aiResult, labelData, foodName, sourceType;
 
-    // ✅ JSON input
+    /* -------- INPUT HANDLING -------- */
     if (body.foodData) {
-      try {
-        aiResult = JSON.parse(body.foodData);
-        labelData = await askAIForLabel(body.foodData);
-        foodName = `Custom JSON Food: ${labelData?.label || "Unknown"}`;
-        sourceType = "json";
-      } catch (e) {
-        cleanupFile();
-        return res
-          .status(400)
-          .json({ error: "foodData field is not valid JSON string" });
-      }
-    }
-    // ✅ Text input
-    else if (body.customText) {
+      aiResult = JSON.parse(body.foodData);
+      labelData = await askAIForLabel(body.foodData);
+      foodName = `Custom JSON Food: ${labelData?.label || "Unknown"}`;
+      sourceType = "json";
+    } else if (body.customText) {
       aiResult = await askAIForNutrition(body.customText);
       labelData = await askAIForLabel(body.customText);
       foodName = body.customText;
       sourceType = "text";
-    }
-    // ✅ Image input
-    else if (req.file) {
-      // NOTE: Groq's Llama 3 is text-only. It cannot see the image content.
-      // We pass the filename/a generic prompt for analysis.
-      aiResult = await askAIForNutrition(
-        "Food image uploaded with filename: " + req.file.originalname
-      );
+    } else if (req.file) {
+      aiResult = await askAIForNutrition("Food image uploaded");
       labelData = await askAIForLabel("Food from image");
       foodName = "Image Food";
       sourceType = "image";
     } else {
       cleanupFile();
-      return res
-        .status(400)
-        .json({ error: "Provide foodData (JSON), customText, or an image." });
+      return res.status(400).json({ error: "Send foodData, customText or image" });
     }
 
-    // --- Validation and Fallback ---
-    if (!aiResult) {
+    if (!aiResult || !labelData) {
       cleanupFile();
-      return res
-        .status(400)
-        .json({ error: "AI failed to return nutrition JSON. Try rephrasing." });
+      return res.status(400).json({ error: "AI did not return valid JSON" });
     }
-    if (!labelData) {
-      cleanupFile();
-      return res
-        .status(400)
-        .json({ error: "AI failed to return label JSON. Try rephrasing." });
-    }
+
     const entryCalories = aiResult.calories || 0;
 
-    // --- Database Aggregation ---
+    /* -------- DATABASE INSERTING -------- */
     const today = new Date();
     const y = today.getFullYear();
     const m = today.getMonth() + 1;
@@ -455,28 +786,30 @@ router.post("/addFood", upload.single("image"), async (req, res) => {
       monthData.days.push(dayData);
     }
 
-    // ✅ Update daily totals
-    for (const key in aiResult) {
-      if (dayData.hasOwnProperty(key) && !isNaN(aiResult[key])) {
-        dayData[key] = (dayData[key] || 0) + (aiResult[key] || 0);
+    /* -------- UPDATE NUTRITION VALUES -------- */
+    Object.keys(aiResult).forEach((key) => {
+      if (dayData.hasOwnProperty(key)) {
+        dayData[key] += aiResult[key] || 0;
       }
-    }
+    });
 
     if (labelData.healthTag === "good_to_have")
       dayData.goodCalories += entryCalories;
     else dayData.badCalories += entryCalories;
 
-    // ✅ Insert food entry
     const newFoodEntry = {
       name: foodName,
       label: labelData.label,
       healthTag: labelData.healthTag,
       ...aiResult,
       imageUrl: fileUploaded ? req.file.path : null,
-      sourceType: sourceType,
+      sourceType,
     };
 
     dayData.foodItems.push(newFoodEntry);
+
+    /* -------- CRITICAL FIX -------- */
+    userFood.markModified("nutritionByDate");
 
     await userFood.save();
 
@@ -488,8 +821,8 @@ router.post("/addFood", upload.single("image"), async (req, res) => {
       todaySummary: dayData,
     });
   } catch (err) {
-    console.error("🔥 Error in /addFood:", err);
     cleanupFile();
+    console.error("🔥 Error in /addFood:", err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -502,123 +835,5 @@ router.get("/listFood/:userId", async (req, res) => {
   res.json(food || { message: "No food data found for user" });
 });
 
-/* =========================================================
-  3️⃣ GET CUSTOM DATE DATA
-========================================================= */
-router.post("/getCustomDateData", async (req, res) => {
-  try {
-    const { userId, startDate, endDate } = req.body;
-
-    if (!userId || !startDate)
-      return res
-        .status(400)
-        .json({ error: "userId and startDate are required" });
-
-    const [startDay, startMonth, startYear] = startDate.split("/").map(Number);
-    const start = new Date(startYear, startMonth - 1, startDay);
-
-    let end;
-    if (endDate) {
-      const [d, m, y] = endDate.split("/").map(Number);
-      end = new Date(y, m - 1, d);
-    } else {
-      end = new Date(startYear, startMonth - 1, startDay);
-    }
-
-    end.setHours(23, 59, 59, 999);
-
-    const data = await FoodEntry.findOne({ userId });
-    if (!data) return res.json({ message: "No data found for user" });
-
-    let total = {
-      calories: 0,
-      protein: 0,
-      fat: 0,
-      carbs: 0,
-      sugar: 0,
-      calcium: 0,
-    };
-    let tracker = 0;
-
-    data.nutritionByDate.forEach((year) => {
-      year.months.forEach((month) => {
-        month.days.forEach((day) => {
-          const entryDate = new Date(year.year, month.month - 1, day.day);
-
-          if (entryDate >= start && entryDate <= end) {
-            tracker++;
-            for (let key in total) {
-              total[key] += day[key] || 0;
-            }
-          }
-        });
-      });
-    });
-
-    if (tracker === 0)
-      return res.json({ message: "No data found for given date range" });
-
-    res.json({
-      message: "✅ Data fetched successfully",
-      userId,
-      from: startDate,
-      to: endDate || startDate,
-      daysCount: tracker,
-      totals: total,
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-/* =========================================================
-  4️⃣ GET HOMEPAGE DATA (TODAY’S SUMMARY)
-========================================================= */
-router.get("/dataHomepage/:userId", async (req, res) => {
-  try {
-    const { userId } = req.params;
-    const today = new Date();
-    const y = today.getFullYear();
-    const m = today.getMonth() + 1;
-    const d = today.getDate();
-
-    const [profile, food] = await Promise.all([
-      UserProfile.findOne({ userId }),
-      FoodEntry.findOne({ userId }),
-    ]);
-
-    if (!profile) return res.json({ message: "Profile not found" });
-
-    const yearData = food?.nutritionByDate.find((e) => e.year === y);
-    const monthData = yearData?.months.find((e) => e.month === m);
-    const dayData = monthData?.days.find((e) => e.day === d);
-
-    const consumed = {
-      calories: dayData?.calories || 0,
-      protein: dayData?.protein || 0,
-      fat: dayData?.fat || 0,
-      carb: dayData?.carbs || 0,
-    };
-
-    const response = {
-      userId,
-      date: `${d}/${m}/${y}`,
-      target: {
-        calories: profile.targetCalorie,
-        protein: profile.targetProtein,
-        fat: profile.targetFat,
-        carb: profile.targetCarb,
-      },
-      consumed: consumed,
-    };
-
-    res.json({
-      message: "✅ Homepage data fetched successfully",
-      data: response,
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
 module.exports = router;
+
