@@ -17,15 +17,25 @@ const FoodEntrySchema = new mongoose.Schema({
               carbs: { type: Number, default: 0 },
               sugar: { type: Number, default: 0 },
               calcium: { type: Number, default: 0 },
+              
+              goodCalories: { type: Number, default: 0 },
+              badCalories: { type: Number, default: 0 },
+
               foodItems: [
                 {
                   name: String,
+                  label: String,
+                  healthTag: String, // good_to_have | avoid_often
+
                   calories: Number,
                   protein: Number,
                   fat: Number,
                   carbs: Number,
+                  sugar: Number,
+                  calcium: Number,
+
                   imageUrl: String,
-                  sourceType: String, // json | text | image
+                  sourceType: String, 
                 },
               ],
             },
