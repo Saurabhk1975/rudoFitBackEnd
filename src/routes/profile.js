@@ -57,24 +57,63 @@ router.post("/createProfile", async (req, res) => {
   try {
     const data = req.body;
 
+    // Check if profile already exists for this userId
+    const existing = await UserProfile.findOne({ userId: data.userId });
+
     // Get AI-calculated target values
     const targets = await getAICalculatedTargets(data);
 
-    const profile = new UserProfile({
+    const updatedData = {
       ...data,
       targetCalorie: targets.calories,
       targetProtein: targets.protein,
       targetFat: targets.fat,
       targetCarb: targets.carb,
-    });
+    };
 
-    await profile.save();
-    res.json({ message: "✅ Profile created successfully", profile });
-  } catch (err) {
-    console.error("❌ Create Profile Error:", err);
-    res.status(500).json({ error: err.message });
-  }
-});
+    let profile;
+
+    if (existing) {
+      // 👉 Update existing profile
+      profile = await UserProfile.findOneAndUpdate(
+        { userId: data.userId },
+        updatedData,
+        { new: true }
+      );
+      return res.json({
+        message: "♻️ Profile updated successfully",
+        profile,
+      });
+    } else {
+      // 👉 Create new profile
+      profile =
+
+
+
+
+
+// router.post("/createProfile", async (req, res) => {
+//   try {
+//     const data = req.body;
+
+//     // Get AI-calculated target values
+//     const targets = await getAICalculatedTargets(data);
+
+//     const profile = new UserProfile({
+//       ...data,
+//       targetCalorie: targets.calories,
+//       targetProtein: targets.protein,
+//       targetFat: targets.fat,
+//       targetCarb: targets.carb,
+//     });
+
+//     await profile.save();
+//     res.json({ message: "✅ Profile created successfully", profile });
+//   } catch (err) {
+//     console.error("❌ Create Profile Error:", err);
+//     res.status(500).json({ error: err.message });
+//   }
+// });
 
 // 🧩 GET /profile/:userId
 router.get("/profile/:userId", async (req, res) => {
