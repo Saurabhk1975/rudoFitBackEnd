@@ -1034,48 +1034,138 @@ router.get("/listFood/:userId", async (req, res) => {
 /* =========================================================
   3️⃣ GET CUSTOM DATE RANGE DATA
 ========================================================= */
+// router.post("/getCustomDateData", async (req, res) => {
+//   try {
+//     const { userId, startDate, endDate } = req.body;
+
+//     const food = await FoodEntry.findOne({ userId });
+//     if (!food) return res.json({ totals: {}, daysCount: 0 });
+
+//     const [sDay, sMonth, sYear] = startDate.split("/").map(Number);
+//     const start = new Date(sYear, sMonth - 1, sDay);
+
+//     let end = start;
+//     if (endDate) {
+//       const [eDay, eMonth, eYear] = endDate.split("/").map(Number);
+//       end = new Date(eYear, eMonth - 1, eDay);
+//     }
+//     end.setHours(23, 59, 59, 999);
+
+//     let totals = {
+//       calories: 0,
+//       protein: 0,
+//       fat: 0,
+//       carbs: 0,
+//       sugar: 0,
+//       calcium: 0,
+//     };
+//     let count = 0;
+
+//     food.nutritionByDate.forEach((year) => {
+//       year.months.forEach((month) => {
+//         month.days.forEach((day) => {
+//           const dt = new Date(year.year, month.month - 1, day.day);
+//           if (dt >= start && dt <= end) {
+//             count++;
+//             Object.keys(totals).forEach((k) => {
+//               totals[k] += day[k] || 0;
+//             });
+//           }
+//         });
+//       });
+//     });
+
+//     res.json({ totals, daysCount: count });
+//   } catch (err) {
+//     res.status(500).json({ error: err.message });
+//   }
+// });
 router.post("/getCustomDateData", async (req, res) => {
   try {
     const { userId, startDate, endDate } = req.body;
 
-    const food = await FoodEntry.findOne({ userId });
-    if (!food) return res.json({ totals: {}, daysCount: 0 });
+    if (!userId || !startDate)
+      return res.status(400).json({ error: "userId and startDate required" });
 
+    const food = await FoodEntry.findOne({ userId });
+    if (!food)
+      return res.json({
+        message: "No food data available",
+        days: [],
+      });
+
+    // ------------------ PARSE START & END DATE ------------------
     const [sDay, sMonth, sYear] = startDate.split("/").map(Number);
     const start = new Date(sYear, sMonth - 1, sDay);
 
-    let end = start;
+    let end = start; // Default: single day
     if (endDate) {
       const [eDay, eMonth, eYear] = endDate.split("/").map(Number);
       end = new Date(eYear, eMonth - 1, eDay);
     }
+
     end.setHours(23, 59, 59, 999);
 
-    let totals = {
-      calories: 0,
-      protein: 0,
-      fat: 0,
-      carbs: 0,
-      sugar: 0,
-      calcium: 0,
-    };
-    let count = 0;
+    // Generate all dates between start & end
+    let rangeDates = [];
+    let pointer = new Date(start);
 
-    food.nutritionByDate.forEach((year) => {
-      year.months.forEach((month) => {
-        month.days.forEach((day) => {
-          const dt = new Date(year.year, month.month - 1, day.day);
-          if (dt >= start && dt <= end) {
-            count++;
-            Object.keys(totals).forEach((k) => {
-              totals[k] += day[k] || 0;
-            });
-          }
-        });
+    while (pointer <= end) {
+      rangeDates.push({
+        d: pointer.getDate(),
+        m: pointer.getMonth() + 1,
+        y: pointer.getFullYear(),
+        dateString: `${pointer.getDate()}/${pointer.getMonth() + 1}/${pointer.getFullYear()}`,
+      });
+      pointer.setDate(pointer.getDate() - (-1)); // pointer++ safely
+    }
+
+    // ------------------ RESULT ARRAY ------------------
+    let result = [];
+
+    rangeDates.forEach((dt) => {
+      const yearData = food.nutritionByDate.find((e) => e.year === dt.y);
+      const monthData = yearData?.months.find((e) => e.month === dt.m);
+      const dayData = monthData?.days.find((e) => e.day === dt.d);
+
+      const totals = {
+        calories: dayData?.calories || 0,
+        protein: dayData?.protein || 0,
+        fat: dayData?.fat || 0,
+        carbs: dayData?.carbs || 0,
+        sugar: dayData?.sugar || 0,
+        calcium: dayData?.calcium || 0,
+      };
+
+      const message =
+        dayData ?
+        "Food eaten on this day" :
+        "Not eaten anything on this day";
+
+      result.push({
+        date: dt.dateString,
+        totals,
+        message,
       });
     });
 
-    res.json({ totals, daysCount: count });
+    // If only 1 date (today or single day)
+    if (rangeDates.length === 1) {
+      return res.json({
+        message: "Single day data",
+        day: result[0],
+      });
+    }
+
+    // If date range
+    res.json({
+      message: "Date range data fetched",
+      from: startDate,
+      to: endDate || startDate,
+      daysCount: result.length,
+      days: result,
+    });
+
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1117,6 +1207,243 @@ router.get("/dataHomepage/:userId", async (req, res) => {
       consumed,
       today: `${d}/${m}/${y}`,
       nutritionByDate: food.nutritionByDate,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
+
+
+
+--------------------------------------------------------------------------------------------
+                   DASHBOARD ALL
+--------------------------------------------------------------------------------------------
+  router.get("/dashboard/:userId", async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    const profile = await UserProfile.findOne({ userId });
+    const food = await FoodEntry.findOne({ userId });
+
+    if (!profile)
+      return res.json({ message: "Profile not found", data: {} });
+
+    const today = new Date();
+    const y = today.getFullYear();
+    const m = today.getMonth() + 1;
+    const d = today.getDate();
+
+    /* ---------- TODAY DATA ---------- */
+    let todayData = { calories: 0, protein: 0, fat: 0, carbs: 0 };
+    let todayItems = [];
+
+    if (food) {
+      const yData = food.nutritionByDate.find((e) => e.year === y);
+      const mData = yData?.months.find((e) => e.month === m);
+      const dData = mData?.days.find((e) => e.day === d);
+
+      if (dData) {
+        todayData = {
+          calories: dData.calories,
+          protein: dData.protein,
+          fat: dData.fat,
+          carbs: dData.carbs,
+        };
+        todayItems = dData.foodItems;
+      }
+    }
+
+    /* ---------- WEEKLY SUMMARY ---------- */
+    let weekly = [];
+    if (food) {
+      const weekDates = [];
+
+      for (let i = 0; i < 7; i++) {
+        let dt = new Date(today);
+        dt.setDate(today.getDate() - i);
+        weekDates.push(dt);
+      }
+
+      weekDates.reverse().forEach((dt) => {
+        const yy = dt.getFullYear();
+        const mm = dt.getMonth() + 1;
+        const dd = dt.getDate();
+
+        const yData = food.nutritionByDate.find((e) => e.year === yy);
+        const mData = yData?.months.find((e) => e.month === mm);
+        const dData = mData?.days.find((e) => e.day === dd);
+
+        weekly.push({
+          date: `${dd}/${mm}/${yy}`,
+          calories: dData?.calories || 0,
+        });
+      });
+    }
+
+    /* ---------- MONTHLY SUMMARY ---------- */
+    let monthly = [];
+    if (food) {
+      const numDays = new Date(y, m, 0).getDate();
+      const yData = food.nutritionByDate.find((e) => e.year === y);
+      const mData = yData?.months.find((e) => e.month === m);
+
+      for (let day = 1; day <= numDays; day++) {
+        const dData = mData?.days.find((e) => e.day === day);
+        monthly.push({
+          date: `${day}/${m}/${y}`,
+          calories: dData?.calories || 0,
+        });
+      }
+    }
+
+    /* ---------- BEST & WORST DAYS ---------- */
+    let best = null,
+      worst = null;
+
+    if (food) {
+      let allDays = [];
+
+      food.nutritionByDate.forEach((yy) => {
+        yy.months.forEach((mm) => {
+          mm.days.forEach((dd) => {
+            allDays.push({
+              date: `${dd.day}/${mm.month}/${yy.year}`,
+              calories: dd.calories || 0,
+            });
+          });
+        });
+      });
+
+      if (allDays.length > 0) {
+        best = allDays.reduce((a, b) =>
+          a.calories > b.calories ? a : b
+        );
+        worst = allDays.reduce((a, b) =>
+          a.calories < b.calories ? a : b
+        );
+      }
+    }
+
+    /* ---------- MOST EATEN FOODS ---------- */
+    let foodCounter = {};
+    let mostEaten = [];
+
+    if (food) {
+      food.nutritionByDate.forEach((year) => {
+        year.months.forEach((month) => {
+          month.days.forEach((day) => {
+            day.foodItems.forEach((item) => {
+              foodCounter[item.label] = (foodCounter[item.label] || 0) + 1;
+            });
+          });
+        });
+      });
+
+      mostEaten = Object.entries(foodCounter)
+        .map(([label, count]) => ({ label, count }))
+        .sort((a, b) => b.count - a.count);
+    }
+
+    /* ---------- SEND RESPONSE ---------- */
+    res.json({
+      message: "Dashboard data loaded",
+      data: {
+        today: {
+          date: `${d}/${m}/${y}`,
+          target: {
+            calories: profile.targetCalorie,
+            protein: profile.targetProtein,
+            fat: profile.targetFat,
+            carb: profile.targetCarb,
+          },
+          consumed: todayData,
+          items: todayItems,
+        },
+        weekly,
+        monthly,
+        best,
+        worst,
+        mostEatenFoods: mostEaten,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
+---------------------------------------------------------------------------------------------------------------------------------
+                    AI ADVISIOR
+--------------------------------------------------------------------------------------------------------------------------------
+  router.post("/aiNutritionAdvisor", async (req, res) => {
+  try {
+    const { userId } = req.body;
+
+    const profile = await UserProfile.findOne({ userId });
+    const food = await FoodEntry.findOne({ userId });
+
+    if (!profile)
+      return res.json({ error: "Profile not found" });
+
+    const today = new Date();
+    const y = today.getFullYear();
+    const m = today.getMonth() + 1;
+    const d = today.getDate();
+
+    const yData = food?.nutritionByDate.find((e) => e.year === y);
+    const mData = yData?.months.find((e) => e.month === m);
+    const dData = mData?.days.find((e) => e.day === d);
+
+    const consumed = {
+      calories: dData?.calories || 0,
+      protein: dData?.protein || 0,
+      fat: dData?.fat || 0,
+      carbs: dData?.carbs || 0,
+      sugar: dData?.sugar || 0,
+      calcium: dData?.calcium || 0,
+    };
+
+    /* ---------- AI PROMPT ---------- */
+    const prompt = `
+User Profile:
+Age: ${profile.age}, Gender: ${profile.gender}, Goal: ${profile.goal}
+Target: 
+Calories: ${profile.targetCalorie},
+Protein: ${profile.targetProtein},
+Fat: ${profile.targetFat},
+Carb: ${profile.targetCarb}
+
+Today's Consumption:
+${JSON.stringify(consumed)}
+
+Based on this, give suggestions in pure JSON ONLY:
+{
+ "deficiencies": ["protein low", "vitamin C low"],
+ "recommendFoods": ["banana", "curd", "eggs", "paneer"],
+ "avoidFoods": ["sugar", "oil"],
+ "supplements": ["Vitamin D3", "Omega 3"],
+ "summary": "Short summary of user's diet today"
+}
+`;
+
+    const aiResponse = await client.responses.create({
+      model: "openai/gpt-oss-20b",
+      input: prompt,
+    });
+
+    let output;
+
+    try {
+      output = JSON.parse(aiResponse.output_text);
+    } catch (e) {
+      output = { error: "AI response not parsable" };
+    }
+
+    res.json({
+      message: "AI Nutrition Advice",
+      advice: output,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
