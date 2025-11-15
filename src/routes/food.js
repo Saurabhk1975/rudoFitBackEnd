@@ -1525,6 +1525,7 @@ Food: ${text}
 /* =========================================================
   1️⃣ ADD FOOD — ATOMIC (WORKING)
 ========================================================= */
+// Replace your existing /addFood route with this version
 router.post("/addFood", upload.single("image"), async (req, res) => {
   const file = req.file;
 
@@ -1532,9 +1533,8 @@ router.post("/addFood", upload.single("image"), async (req, res) => {
     const { userId, foodData, customText } = req.body;
     if (!userId) return res.status(400).json({ error: "userId required" });
 
-    /* ---------- AI PROCESSING ---------- */
+    // ---------- AI processing (same as you had) ----------
     let ai, label, name, type;
-
     if (foodData) {
       ai = JSON.parse(foodData);
       label = await askAIForLabel(foodData);
@@ -1554,104 +1554,99 @@ router.post("/addFood", upload.single("image"), async (req, res) => {
       return res.status(400).json({ error: "No food data provided" });
     }
 
-    if (!ai || !label) return res.json({ error: "AI returned invalid JSON" });
+    if (!ai || !label) return res.status(400).json({ error: "AI returned invalid JSON" });
+
+    // Normalize numeric values to numbers (avoid string issues)
+    const numericFields = ["calories", "protein", "fat", "carbs", "sugar", "calcium"];
+    numericFields.forEach((k) => {
+      if (ai[k] === undefined || ai[k] === null || ai[k] === "") ai[k] = 0;
+      else ai[k] = Number(ai[k]) || 0;
+    });
 
     const calories = ai.calories || 0;
     const isGood = label.healthTag === "good_to_have";
 
-    /* ---------- DATE ---------- */
+    // ---------- Today's date ----------
     const today = new Date();
     const y = today.getFullYear();
     const m = today.getMonth() + 1;
     const d = today.getDate();
 
+    // Food item to push
     const foodItem = {
       name,
-      label: label.label,
-      healthTag: label.healthTag,
+      label: label.label || name,
+      healthTag: label.healthTag || "unknown",
       ...ai,
       imageUrl: file ? file.path : null,
       sourceType: type,
+      createdAt: new Date(),
     };
 
-    /* ---------- 1: Ensure root document ---------- */
-    await FoodEntry.updateOne(
+    // ---------- 1) fetch-or-create root document ----------
+    // findOneAndUpdate with $setOnInsert ensures the document exists, returns the doc (new:true)
+    let userFood = await FoodEntry.findOneAndUpdate(
       { userId },
       { $setOnInsert: { userId, nutritionByDate: [] } },
-      { upsert: true }
+      { upsert: true, new: true }
     );
 
-    /* ---------- 2: Ensure year ---------- */
-    await FoodEntry.updateOne(
-      { userId, "nutritionByDate.year": { $ne: y } },
-      { $push: { nutritionByDate: { year: y, months: [] } } }
-    );
+    // ---------- 2) find or create year ----------
+    let yearData = userFood.nutritionByDate.find((yr) => yr.year === y);
+    if (!yearData) {
+      yearData = { year: y, months: [] };
+      userFood.nutritionByDate.push(yearData);
+    }
 
-    /* ---------- 3: Ensure month ---------- */
-    await FoodEntry.updateOne(
-      { userId, "nutritionByDate.year": y, "nutritionByDate.months.month": { $ne: m } },
-      { $push: { "nutritionByDate.$.months": { month: m, days: [] } } }
-    );
+    // ---------- 3) find or create month inside that year ----------
+    let monthData = yearData.months.find((mm) => mm.month === m);
+    if (!monthData) {
+      monthData = { month: m, days: [] };
+      yearData.months.push(monthData);
+    }
 
-    /* ---------- 4: Ensure day ---------- */
-    await FoodEntry.updateOne(
-      {
-        userId,
-        "nutritionByDate.year": y,
-        "nutritionByDate.months.month": m,
-        "nutritionByDate.months.days.day": { $ne: d },
-      },
-      {
-        $push: {
-          "nutritionByDate.$[y].months.$[m].days": {
-            day: d,
-            calories: 0,
-            protein: 0,
-            fat: 0,
-            carbs: 0,
-            sugar: 0,
-            calcium: 0,
-            goodCalories: 0,
-            badCalories: 0,
-            foodItems: [],
-          },
-        },
-      },
-      {
-        arrayFilters: [{ "y.year": y }, { "m.month": m }],
-      }
-    );
+    // ---------- 4) find or create day inside that month ----------
+    let dayData = monthData.days.find((dd) => dd.day === d);
+    if (!dayData) {
+      dayData = {
+        day: d,
+        calories: 0,
+        protein: 0,
+        fat: 0,
+        carbs: 0,
+        sugar: 0,
+        calcium: 0,
+        goodCalories: 0,
+        badCalories: 0,
+        foodItems: [],
+      };
+      monthData.days.push(dayData);
+    }
 
-    /* ---------- 5: Push food + update totals ---------- */
-    await FoodEntry.updateOne(
-      { userId },
-      {
-        $push: {
-          "nutritionByDate.$[y].months.$[m].days.$[d].foodItems": foodItem,
-        },
-        $inc: {
-          "nutritionByDate.$[y].months.$[m].days.$[d].calories": ai.calories || 0,
-          "nutritionByDate.$[y].months.$[m].days.$[d].protein": ai.protein || 0,
-          "nutritionByDate.$[y].months.$[m].days.$[d].fat": ai.fat || 0,
-          "nutritionByDate.$[y].months.$[m].days.$[d].carbs": ai.carbs || 0,
-          "nutritionByDate.$[y].months.$[m].days.$[d].sugar": ai.sugar || 0,
-          "nutritionByDate.$[y].months.$[m].days.$[d].calcium": ai.calcium || 0,
-          "nutritionByDate.$[y].months.$[m].days.$[d].goodCalories": isGood ? calories : 0,
-          "nutritionByDate.$[y].months.$[m].days.$[d].badCalories": isGood ? 0 : calories,
-        },
-      },
-      {
-        arrayFilters: [
-          { "y.year": y },
-          { "m.month": m },
-          { "d.day": d },
-        ],
-      }
-    );
+    // ---------- 5) update day totals (add AI values) ----------
+    // Ensure we only add numbers
+    dayData.calories = (dayData.calories || 0) + (ai.calories || 0);
+    dayData.protein = (dayData.protein || 0) + (ai.protein || 0);
+    dayData.fat = (dayData.fat || 0) + (ai.fat || 0);
+    dayData.carbs = (dayData.carbs || 0) + (ai.carbs || 0);
+    dayData.sugar = (dayData.sugar || 0) + (ai.sugar || 0);
+    dayData.calcium = (dayData.calcium || 0) + (ai.calcium || 0);
 
-    res.json({ message: "Food added successfully", foodItem });
+    if (isGood) dayData.goodCalories = (dayData.goodCalories || 0) + calories;
+    else dayData.badCalories = (dayData.badCalories || 0) + calories;
+
+    // ---------- 6) push the food item ----------
+    dayData.foodItems.push(foodItem);
+
+    // ---------- 7) persist changes ----------
+    // markModified to be safe for deeply nested arrays
+    userFood.markModified("nutritionByDate");
+    await userFood.save();
+
+    return res.json({ message: "Food added successfully", foodItem, today: `${d}/${m}/${y}` });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error("Error in /addFood:", err);
+    return res.status(500).json({ error: err.message || "Server error" });
   }
 });
 
