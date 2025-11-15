@@ -86,7 +86,19 @@ router.post("/createProfile", async (req, res) => {
       });
     } else {
       // 👉 Create new profile
-      profile =
+      profile = new UserProfile(updatedData);
+      await profile.save();
+      return res.json({
+        message: "✅ Profile created successfully",
+        profile,
+      });
+    }
+  } catch (err) {
+    console.error("❌ Create/Update Profile Error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 
 
 
