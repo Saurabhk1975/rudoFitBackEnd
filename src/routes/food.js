@@ -394,11 +394,16 @@ router.post("/addFood", upload.single("image"), async (req, res) => {
     };
 
     /* ------------ Load Root Document ------------ */
-    let userFood = await FoodEntry.findOneAndUpdate(
-      { userId },
-      { $setOnInsert: { userId, nutritionByDate: [] } },
-      { upsert: true, new: true }
-    );
+    // Ensure root doc exists
+await FoodEntry.updateOne(
+  { userId },
+  { $setOnInsert: { userId, nutritionByDate: [] } },
+  { upsert: true }
+);
+
+// Always fetch fresh, hydrated doc
+let userFood = await FoodEntry.findOne({ userId });
+
 
     /* ------------ Ensure Year ------------ */
     let yearDoc = userFood.nutritionByDate.find((e) => e.year === year);
