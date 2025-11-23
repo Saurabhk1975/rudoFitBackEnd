@@ -473,87 +473,82 @@ let userFood = await FoodEntry.findOne({ userId });
   ADD FOOD FROM JSON ONLY  
   (No AI, No image, No custom text)
 ========================================================= */
+/* =========================================================
+   ADD FOOD USING JSON DATA (Same behaviour as /addFood)
+========================================================= */
 router.post("/addJsonFood", async (req, res) => {
   try {
     const { userId, foodData } = req.body;
-    if (!userId) return res.status(400).json({ error: "userId required" });
-    if (!foodData) return res.status(400).json({ error: "foodData required" });
+    if (!userId) return res.status(400).json({ error: "userId is required" });
+    if (!foodData) return res.status(400).json({ error: "foodData is required" });
 
-    // Ensure JSON is properly parsed
-    let data = foodData;
-    if (typeof foodData === "string") {
-      try {
-        data = JSON.parse(foodData);
-      } catch {
-        return res.status(400).json({ error: "Invalid JSON in foodData" });
-      }
-    }
-
-    /* ------------ Extract nutrition values from your JSON ------------ */
-    const name = data.name || "Unknown Food";
-
+    /* ---------- Clean Number Helper ---------- */
     const clean = (v) => {
       if (v === undefined || v === null) return 0;
       if (typeof v === "string") v = v.replace(/[^\d.-]/g, "");
-      const n = Number(v);
-      return isNaN(n) ? 0 : n;
+      const num = Number(v);
+      return isNaN(num) ? 0 : num;
     };
 
-    const calories = clean(data.calories);
-    const protein  = clean(data.protein_g || data.protein);
-    const fat      = clean(data.fat_g || data.fat);
-    const carbs    = clean(data.carbs_g || data.carbs);
-    const sugar    = clean(data.sugar_g || data.sugar);
-    const calcium  = clean(data.calcium_mg || data.calcium);
+    /* ---------- Extract Correct Fields ---------- */
+    const name = foodData.name || "Food Item";
 
-    // Default tag
-    const healthTag = calories > 350 || fat > 15 || sugar > 15 ? "bad_to_have" : "good_to_have";
+    const calories = clean(foodData.calories);
+    const protein = clean(foodData.protein_g);
+    const carbs = clean(foodData.carbs_g);
+    const fat = clean(foodData.fat_g);
+    const sugar = clean(foodData.sugar_g);
+    const calcium = clean(foodData.calcium_mg);
 
-    /* ------------ IST DATE ------------ */
-    const nowIST = getISTDate();
-    const year = nowIST.getFullYear();
-    const month = nowIST.getMonth() + 1;
-    const day = nowIST.getDate();
+    // Mark as goodCalories by default (you can apply your logic later)
+    const isGood = true;
+
+    /* ---------- IST DATE ---------- */
+    const now = getISTDate();
+    const year = now.getFullYear();
+    const month = now.getMonth() + 1;
+    const day = now.getDate();
 
     const foodItem = {
       name,
       label: name,
-      healthTag,
+      healthTag: "good_to_have",
       calories,
       protein,
       fat,
       carbs,
       sugar,
       calcium,
+      imageUrl: null,
       sourceType: "json",
-      createdAt: getISTDate().toISOString()
+      createdAt: now.toISOString(),
     };
 
-    /* ------------ Ensure Root Document ------------ */
+    /* ---------- Create root doc if missing ---------- */
     await FoodEntry.updateOne(
       { userId },
       { $setOnInsert: { userId, nutritionByDate: [] } },
       { upsert: true }
     );
 
-    const userFood = await FoodEntry.findOne({ userId });
+    let userFood = await FoodEntry.findOne({ userId });
 
-    /* ------------ Ensure Year ------------ */
-    let yearDoc = userFood.nutritionByDate.find((e) => e.year === year);
+    /* ---------- Ensure YEAR ---------- */
+    let yearDoc = userFood.nutritionByDate.find((y) => y.year === year);
     if (!yearDoc) {
       yearDoc = { year, months: [] };
       userFood.nutritionByDate.push(yearDoc);
     }
 
-    /* ------------ Ensure Month ------------ */
-    let monthDoc = yearDoc.months.find((e) => e.month === month);
+    /* ---------- Ensure MONTH ---------- */
+    let monthDoc = yearDoc.months.find((m) => m.month === month);
     if (!monthDoc) {
       monthDoc = { month, days: [] };
       yearDoc.months.push(monthDoc);
     }
 
-    /* ------------ Ensure Day ------------ */
-    let dayDoc = monthDoc.days.find((e) => e.day === day);
+    /* ---------- Ensure DAY ---------- */
+    let dayDoc = monthDoc.days.find((d) => d.day === day);
     if (!dayDoc) {
       dayDoc = {
         day,
@@ -570,37 +565,34 @@ router.post("/addJsonFood", async (req, res) => {
       monthDoc.days.push(dayDoc);
     }
 
-    /* ------------ Update Aggregates ------------ */
+    /* ---------- Update Totals ---------- */
     dayDoc.calories += calories;
-    dayDoc.protein  += protein;
-    dayDoc.fat      += fat;
-    dayDoc.carbs    += carbs;
-    dayDoc.sugar    += sugar;
-    dayDoc.calcium  += calcium;
+    dayDoc.protein += protein;
+    dayDoc.fat += fat;
+    dayDoc.carbs += carbs;
+    dayDoc.sugar += sugar;
+    dayDoc.calcium += calcium;
 
-    if (healthTag === "good_to_have") dayDoc.goodCalories += calories;
+    if (isGood) dayDoc.goodCalories += calories;
     else dayDoc.badCalories += calories;
 
-    /* ------------ Push Food Item ------------ */
     dayDoc.foodItems.push(foodItem);
 
     userFood.markModified("nutritionByDate");
     await userFood.save();
 
     return res.json({
-      message: "JSON food added successfully",
+      message: "JSON food added and totals updated",
       today: `${day}/${month}/${year}`,
-      foodItem,
       updatedDay: dayDoc,
-      nutritionByDate: userFood.nutritionByDate
+      nutritionByDate: userFood.nutritionByDate,
     });
 
   } catch (err) {
-    console.error("Error in /addJsonFood:", err);
+    console.error("JSON FOOD ERROR:", err);
     return res.status(500).json({ error: err.message });
   }
 });
-
 
 
 
