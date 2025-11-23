@@ -140,333 +140,170 @@ Food: ${text}`;
    - push foodItem into day.foodItems
    - save()
 ========================================================= */
-// Robust /addFood route — replace your current route with this
-// router.post("/addFood", upload.single("image"), async (req, res) => {
-//   const file = req.file;
 
-//   try {
-//     const { userId, foodData, customText } = req.body;
-//     if (!userId) return res.status(400).json({ error: "userId required" });
+router.post("/addFood", upload.single("image"), async (req, res) => {
+  const file = req.file;
 
-//     // ---------- AI / input handling ----------
-//     let ai = null;
-//     let label = null;
-//     let name = "Food Item";
-//     let sourceType = "unknown";
+  try {
+    const { userId, foodData, customText } = req.body;
+    if (!userId) return res.status(400).json({ error: "userId required" });
 
-//     if (foodData) {
-//       // foodData expected as JSON string or JSON object
-//       if (typeof foodData === "string") {
-//         try {
-//           ai = JSON.parse(foodData);
-//         } catch (e) {
-//           return res.status(400).json({ error: "foodData must be valid JSON" });
-//         }
-//       } else {
-//         ai = foodData;
-//       }
-//       // try to get label from AI; if AI fails we'll fallback
-//       label = await askAIForLabel(typeof foodData === "string" ? foodData : JSON.stringify(foodData));
-//       name = label?.label || "Custom Food";
-//       sourceType = "json";
-//     } else if (customText) {
-//       ai = await askAIForNutrition(customText);
-//       label = await askAIForLabel(customText);
-//       name = customText;
-//       sourceType = "text";
-//     } else if (file) {
-//       ai = await askAIForNutrition("Food image uploaded: " + (file.originalname || ""));
-//       label = await askAIForLabel("Food image");
-//       name = label?.label || "Image Food";
-//       sourceType = "image";
-//     } else {
-//       return res.status(400).json({ error: "Provide foodData (JSON), customText, or an image" });
-//     }
+    // ---------- AI / input handling ----------
+    let ai = null;
+    let label = null;
+    let name = "Food Item";
+    let sourceType = "unknown";
 
-//     if (!ai) {
-//       return res.status(400).json({ error: "AI failed to provide nutrition data" });
-//     }
+    if (foodData) {
+      // foodData expected as JSON string or JSON object
+      if (typeof foodData === "string") {
+        try {
+          ai = JSON.parse(foodData);
+        } catch (e) {
+          return res.status(400).json({ error: "foodData must be valid JSON" });
+        }
+      } else {
+        ai = foodData;
+      }
+      // try to get label from AI; if AI fails we'll fallback
+      label = await askAIForLabel(typeof foodData === "string" ? foodData : JSON.stringify(foodData));
+      name = label?.label || "Custom Food";
+      sourceType = "json";
+    } else if (customText) {
+      ai = await askAIForNutrition(customText);
+      label = await askAIForLabel(customText);
+      name = customText;
+      sourceType = "text";
+    } else if (file) {
+      ai = await askAIForNutrition("Food image uploaded: " + (file.originalname || ""));
+      label = await askAIForLabel("Food image");
+      name = label?.label || "Image Food";
+      sourceType = "image";
+    } else {
+      return res.status(400).json({ error: "Provide foodData (JSON), customText, or an image" });
+    }
 
-//     // ---------- Normalize numeric fields (safe coercion) ----------
-//     const numericKeys = ["calories", "protein", "fat", "carbs", "sugar", "calcium"];
-//     numericKeys.forEach((k) => {
-//       // handle cases like { $numberInt: "10" } by converting to primitive if needed
-//       const v = ai[k];
-//       if (v === undefined || v === null || v === "") {
-//         ai[k] = 0;
-//       } else if (typeof v === "object" && (v.$numberInt || v.$numberDouble || v.$numberLong)) {
-//         // handle some Mongo exported forms
-//         ai[k] = Number(v.$numberInt || v.$numberDouble || v.$numberLong) || 0;
-//       } else {
-//         ai[k] = Number(v) || 0;
-//       }
-//     });
+    if (!ai) {
+      return res.status(400).json({ error: "AI failed to provide nutrition data" });
+    }
 
-//     const calories = ai.calories || 0;
-//     const isGood = (label?.healthTag || "").toString().toLowerCase() === "good_to_have";
+    // ---------- Normalize numeric fields (safe coercion) ----------
+    const numericKeys = ["calories", "protein", "fat", "carbs", "sugar", "calcium"];
+    numericKeys.forEach((k) => {
+      // handle cases like { $numberInt: "10" } by converting to primitive if needed
+      const v = ai[k];
+      if (v === undefined || v === null || v === "") {
+        ai[k] = 0;
+      } else if (typeof v === "object" && (v.$numberInt || v.$numberDouble || v.$numberLong)) {
+        // handle some Mongo exported forms
+        ai[k] = Number(v.$numberInt || v.$numberDouble || v.$numberLong) || 0;
+      } else {
+        ai[k] = Number(v) || 0;
+      }
+    });
 
-//     // ---------- IST date (use IST everywhere) ----------
-//     const nowIST = getISTDate();
-//     const year = nowIST.getFullYear();
-//     const month = nowIST.getMonth() + 1;
-//     const day = nowIST.getDate();
+    const calories = ai.calories || 0;
+    const isGood = (label?.healthTag || "").toString().toLowerCase() === "good_to_have";
 
-//     // Build the foodItem to push (createdAt stored as IST ISO string)
-//     const foodItem = {
-//       name: name,
-//       label: label?.label || name,
-//       healthTag: label?.healthTag || "unknown",
-//       calories: ai.calories || 0,
-//       protein: ai.protein || 0,
-//       fat: ai.fat || 0,
-//       carbs: ai.carbs || 0,
-//       sugar: ai.sugar || 0,
-//       calcium: ai.calcium || 0,
-//       imageUrl: file ? file.path : null,
-//       sourceType,
-//       createdAt: getISTDate().toISOString(),
-//     };
+    // ---------- IST date (use IST everywhere) ----------
+    const nowIST = getISTDate();
+    const year = nowIST.getFullYear();
+    const month = nowIST.getMonth() + 1;
+    const day = nowIST.getDate();
 
-//     // ---------- Fetch or create root document ----------
-//     // ensure document exists (upsert)
-//     let userFood = await FoodEntry.findOneAndUpdate(
-//       { userId },
-//       { $setOnInsert: { userId, nutritionByDate: [] } },
-//       { upsert: true, new: true }
-//     );
+    // Build the foodItem to push (createdAt stored as IST ISO string)
+    const foodItem = {
+      name: name,
+      label: label?.label || name,
+      healthTag: label?.healthTag || "unknown",
+      calories: ai.calories || 0,
+      protein: ai.protein || 0,
+      fat: ai.fat || 0,
+      carbs: ai.carbs || 0,
+      sugar: ai.sugar || 0,
+      calcium: ai.calcium || 0,
+      imageUrl: file ? file.path : null,
+      sourceType,
+      createdAt: getISTDate().toISOString(),
+    };
 
-//     // ---------- Ensure year exists ----------
-//     let yearDoc = userFood.nutritionByDate.find((y) => y.year === year);
-//     if (!yearDoc) {
-//       yearDoc = { year: year, months: [] };
-//       userFood.nutritionByDate.push(yearDoc);
-//     }
+    // ---------- Fetch or create root document ----------
+    // ensure document exists (upsert)
+    let userFood = await FoodEntry.findOneAndUpdate(
+      { userId },
+      { $setOnInsert: { userId, nutritionByDate: [] } },
+      { upsert: true, new: true }
+    );
 
-//     // ---------- Ensure month exists ----------
-//     let monthDoc = yearDoc.months.find((mDoc) => mDoc.month === month);
-//     if (!monthDoc) {
-//       monthDoc = { month: month, days: [] };
-//       yearDoc.months.push(monthDoc);
-//     }
+    // ---------- Ensure year exists ----------
+    let yearDoc = userFood.nutritionByDate.find((y) => y.year === year);
+    if (!yearDoc) {
+      yearDoc = { year: year, months: [] };
+      userFood.nutritionByDate.push(yearDoc);
+    }
 
-//     // ---------- Ensure day exists ----------
-//     let dayDoc = monthDoc.days.find((dDoc) => dDoc.day === day);
-//     if (!dayDoc) {
-//       dayDoc = {
-//         day: day,
-//         calories: 0,
-//         protein: 0,
-//         fat: 0,
-//         carbs: 0,
-//         sugar: 0,
-//         calcium: 0,
-//         goodCalories: 0,
-//         badCalories: 0,
-//         foodItems: [],
-//       };
-//       monthDoc.days.push(dayDoc);
-//     }
+    // ---------- Ensure month exists ----------
+    let monthDoc = yearDoc.months.find((mDoc) => mDoc.month === month);
+    if (!monthDoc) {
+      monthDoc = { month: month, days: [] };
+      yearDoc.months.push(monthDoc);
+    }
 
-//     // ---------- Update totals (add new values to current totals) ----------
-//     dayDoc.calories = (Number(dayDoc.calories) || 0) + (Number(ai.calories) || 0);
-//     dayDoc.protein = (Number(dayDoc.protein) || 0) + (Number(ai.protein) || 0);
-//     dayDoc.fat = (Number(dayDoc.fat) || 0) + (Number(ai.fat) || 0);
-//     dayDoc.carbs = (Number(dayDoc.carbs) || 0) + (Number(ai.carbs) || 0);
-//     dayDoc.sugar = (Number(dayDoc.sugar) || 0) + (Number(ai.sugar) || 0);
-//     dayDoc.calcium = (Number(dayDoc.calcium) || 0) + (Number(ai.calcium) || 0);
+    // ---------- Ensure day exists ----------
+    let dayDoc = monthDoc.days.find((dDoc) => dDoc.day === day);
+    if (!dayDoc) {
+      dayDoc = {
+        day: day,
+        calories: 0,
+        protein: 0,
+        fat: 0,
+        carbs: 0,
+        sugar: 0,
+        calcium: 0,
+        goodCalories: 0,
+        badCalories: 0,
+        foodItems: [],
+      };
+      monthDoc.days.push(dayDoc);
+    }
 
-//     if (isGood) {
-//       dayDoc.goodCalories = (Number(dayDoc.goodCalories) || 0) + calories;
-//     } else {
-//       dayDoc.badCalories = (Number(dayDoc.badCalories) || 0) + calories;
-//     }
+    // ---------- Update totals (add new values to current totals) ----------
+    dayDoc.calories = (Number(dayDoc.calories) || 0) + (Number(ai.calories) || 0);
+    dayDoc.protein = (Number(dayDoc.protein) || 0) + (Number(ai.protein) || 0);
+    dayDoc.fat = (Number(dayDoc.fat) || 0) + (Number(ai.fat) || 0);
+    dayDoc.carbs = (Number(dayDoc.carbs) || 0) + (Number(ai.carbs) || 0);
+    dayDoc.sugar = (Number(dayDoc.sugar) || 0) + (Number(ai.sugar) || 0);
+    dayDoc.calcium = (Number(dayDoc.calcium) || 0) + (Number(ai.calcium) || 0);
 
-//     // ---------- Push the foodItem into day's foodItems ----------
-//     dayDoc.foodItems.push(foodItem);
+    if (isGood) {
+      dayDoc.goodCalories = (Number(dayDoc.goodCalories) || 0) + calories;
+    } else {
+      dayDoc.badCalories = (Number(dayDoc.badCalories) || 0) + calories;
+    }
 
-//     // ---------- Persist to DB ----------
-//     userFood.markModified("nutritionByDate");
-//     await userFood.save();
+    // ---------- Push the foodItem into day's foodItems ----------
+    dayDoc.foodItems.push(foodItem);
 
-//     // Return updated day and whole nutritionByDate for verification
-//     const updatedDay = monthDoc.days.find((dd) => dd.day === day);
-//     return res.json({
-//       message: "Food added and totals updated (IST applied)",
-//       today: `${day}/${month}/${year}`,
-//       updatedDay,
-//       nutritionByDate: userFood.nutritionByDate,
-//     });
-//   } catch (err) {
-//     console.error("Error in /addFood:", err);
-//     return res.status(500).json({ error: err.message || "Server error" });
-//   }
-// });
+    // ---------- Persist to DB ----------
+    userFood.markModified("nutritionByDate");
+    await userFood.save();
 
-// /* =========================================================
-//   1️⃣ ADD FOOD — FIXED VERSION
-// ========================================================= */
-// router.post("/addFood", upload.single("image"), async (req, res) => {
-//   const file = req.file;
+    // Return updated day and whole nutritionByDate for verification
+    const updatedDay = monthDoc.days.find((dd) => dd.day === day);
+    return res.json({
+      message: "Food added and totals updated (IST applied)",
+      today: `${day}/${month}/${year}`,
+      updatedDay,
+      nutritionByDate: userFood.nutritionByDate,
+    });
+  } catch (err) {
+    console.error("Error in /addFood:", err);
+    return res.status(500).json({ error: err.message || "Server error" });
+  }
+});
 
-//   try {
-//     const { userId, foodData, customText } = req.body;
-//     if (!userId) return res.status(400).json({ error: "userId required" });
-
-//     let ai = null;
-//     let label = null;
-//     let name = "Food Item";
-//     let sourceType = "unknown";
-
-//     /* ------------ Parse Incoming JSON Safely ------------ */
-//     if (foodData) {
-//       try {
-//         ai = typeof foodData === "string" ? JSON.parse(foodData) : foodData;
-//       } catch {
-//         return res.status(400).json({ error: "Invalid JSON in foodData" });
-//       }
-//       label = await askAIForLabel(foodData);
-//       name = label?.label || "Custom Food";
-//       sourceType = "json";
-//     } 
-//     else if (customText) {
-//       ai = await askAIForNutrition(customText);
-//       label = await askAIForLabel(customText);
-//       name = customText;
-//       sourceType = "text";
-//     } 
-//     else if (file) {
-//       ai = await askAIForNutrition("Food image uploaded");
-//       label = await askAIForLabel("Food image");
-//       name = label?.label || "Image Food";
-//       sourceType = "image";
-//     } 
-//     else {
-//       return res.status(400).json({ error: "Provide foodData, customText or image" });
-//     }
-
-//     if (!ai) return res.status(400).json({ error: "AI returned invalid data" });
-
-//     /* ------------ FIX: Sanitize & Convert Nutrition Values ------------ */
-//     const clean = (val) => {
-//       if (val === undefined || val === null) return 0;
-
-//       if (typeof val === "object" && (val.$numberInt || val.$numberDouble))
-//         return Number(val.$numberInt || val.$numberDouble || 0);
-
-//       // remove all non-numeric characters
-//       if (typeof val === "string") {
-//         val = val.replace(/[^\d.-]/g, "");  // keep numbers, minus, decimal
-//       }
-
-//       let num = Number(val);
-//       return isNaN(num) ? 0 : num;
-//     };
-
-//     ai.calories = clean(ai.calories);
-//     ai.protein = clean(ai.protein);
-//     ai.fat = clean(ai.fat);
-//     ai.carbs = clean(ai.carbs);
-//     ai.sugar = clean(ai.sugar);
-//     ai.calcium = clean(ai.calcium);
-
-//     const calories = ai.calories;
-//     const isGood = (label?.healthTag || "").toLowerCase() === "good_to_have";
-
-//     /* ------------ IST DATE ------------ */
-//     const nowIST = getISTDate();
-//     const year = nowIST.getFullYear();
-//     const month = nowIST.getMonth() + 1;
-//     const day = nowIST.getDate();
-
-//     const foodItem = {
-//       name,
-//       label: label?.label || name,
-//       healthTag: label?.healthTag || "unknown",
-//       calories: ai.calories,
-//       protein: ai.protein,
-//       fat: ai.fat,
-//       carbs: ai.carbs,
-//       sugar: ai.sugar,
-//       calcium: ai.calcium,
-//       imageUrl: file ? file.path : null,
-//       sourceType,
-//       createdAt: getISTDate().toISOString(),
-//     };
-
-//     /* ------------ Load Root Document ------------ */
-//     // Ensure root doc exists
-// await FoodEntry.updateOne(
-//   { userId },
-//   { $setOnInsert: { userId, nutritionByDate: [] } },
-//   { upsert: true }
-// );
-
-// // Always fetch fresh, hydrated doc
-// let userFood = await FoodEntry.findOne({ userId });
-
-
-//     /* ------------ Ensure Year ------------ */
-//     let yearDoc = userFood.nutritionByDate.find((e) => e.year === year);
-//     if (!yearDoc) {
-//       yearDoc = { year, months: [] };
-//       userFood.nutritionByDate.push(yearDoc);
-//     }
-
-//     /* ------------ Ensure Month ------------ */
-//     let monthDoc = yearDoc.months.find((e) => e.month === month);
-//     if (!monthDoc) {
-//       monthDoc = { month, days: [] };
-//       yearDoc.months.push(monthDoc);
-//     }
-
-//     /* ------------ Ensure Day ------------ */
-//     let dayDoc = monthDoc.days.find((e) => e.day === day);
-//     if (!dayDoc) {
-//       dayDoc = {
-//         day,
-//         calories: 0,
-//         protein: 0,
-//         fat: 0,
-//         carbs: 0,
-//         sugar: 0,
-//         calcium: 0,
-//         goodCalories: 0,
-//         badCalories: 0,
-//         foodItems: [],
-//       };
-//       monthDoc.days.push(dayDoc);
-//     }
-
-//     /* ------------ Update Totals ------------ */
-//     dayDoc.calories += ai.calories;
-//     dayDoc.protein += ai.protein;
-//     dayDoc.fat += ai.fat;
-//     dayDoc.carbs += ai.carbs;
-//     dayDoc.sugar += ai.sugar;
-//     dayDoc.calcium += ai.calcium;
-
-//     if (isGood) dayDoc.goodCalories += calories;
-//     else dayDoc.badCalories += calories;
-
-//     dayDoc.foodItems.push(foodItem);
-
-//     userFood.markModified("nutritionByDate");
-//     await userFood.save();
-
-//     return res.json({
-//       message: "Food added successfully",
-//       today: `${day}/${month}/${year}`,
-//       updatedDay: dayDoc,
-//       nutritionByDate: userFood.nutritionByDate,
-//     });
-
-//   } catch (err) {
-//     console.error(err);
-//     return res.status(500).json({ error: err.message });
-//   }
-// });
 /* =========================================================
-  1️⃣ ADD FOOD — FIXED FOR FRONTEND JSON FORMAT
+  1️⃣ ADD FOOD — FIXED VERSION
 ========================================================= */
 router.post("/addFood", upload.single("image"), async (req, res) => {
   const file = req.file;
@@ -480,49 +317,50 @@ router.post("/addFood", upload.single("image"), async (req, res) => {
     let name = "Food Item";
     let sourceType = "unknown";
 
-    /* ------------ CASE 1: JSON from frontend ------------ */
+    /* ------------ Parse Incoming JSON Safely ------------ */
     if (foodData) {
-      let fd = typeof foodData === "string" ? JSON.parse(foodData) : foodData;
-
-      // extract values from frontend JSON
-      name = fd.name || "Custom Food";
-      ai = {
-        calories: fd.calories || 0,
-        protein: fd.protein_g || 0,
-        fat: fd.fat_g || 0,
-        carbs: fd.carbs_g || 0,
-        sugar: fd.sugar_g || 0,
-        calcium: fd.calcium_mg || 0
-      };
-
-      label = { label: name, healthTag: "good_to_have" }; // default
+      try {
+        ai = typeof foodData === "string" ? JSON.parse(foodData) : foodData;
+      } catch {
+        return res.status(400).json({ error: "Invalid JSON in foodData" });
+      }
+      label = await askAIForLabel(foodData);
+      name = label?.label || "Custom Food";
       sourceType = "json";
-    }
-
-    /* ------------ CASE 2: custom text ------------ */
+    } 
     else if (customText) {
       ai = await askAIForNutrition(customText);
       label = await askAIForLabel(customText);
       name = customText;
       sourceType = "text";
-    }
-
-    /* ------------ CASE 3: image ------------ */
+    } 
     else if (file) {
       ai = await askAIForNutrition("Food image uploaded");
       label = await askAIForLabel("Food image");
       name = label?.label || "Image Food";
       sourceType = "image";
-    }
-
+    } 
     else {
       return res.status(400).json({ error: "Provide foodData, customText or image" });
     }
 
-    if (!ai) return res.status(400).json({ error: "Nutrition data missing" });
+    if (!ai) return res.status(400).json({ error: "AI returned invalid data" });
 
-    /* ------------ Clean all numeric values ------------ */
-    const clean = (v) => (isNaN(Number(v)) ? 0 : Number(v));
+    /* ------------ FIX: Sanitize & Convert Nutrition Values ------------ */
+    const clean = (val) => {
+      if (val === undefined || val === null) return 0;
+
+      if (typeof val === "object" && (val.$numberInt || val.$numberDouble))
+        return Number(val.$numberInt || val.$numberDouble || 0);
+
+      // remove all non-numeric characters
+      if (typeof val === "string") {
+        val = val.replace(/[^\d.-]/g, "");  // keep numbers, minus, decimal
+      }
+
+      let num = Number(val);
+      return isNaN(num) ? 0 : num;
+    };
 
     ai.calories = clean(ai.calories);
     ai.protein = clean(ai.protein);
@@ -552,31 +390,36 @@ router.post("/addFood", upload.single("image"), async (req, res) => {
       calcium: ai.calcium,
       imageUrl: file ? file.path : null,
       sourceType,
-      createdAt: nowIST.toISOString(),
+      createdAt: getISTDate().toISOString(),
     };
 
-    /* ------------ Ensure root doc ------------ */
-    await FoodEntry.updateOne(
-      { userId },
-      { $setOnInsert: { userId, nutritionByDate: [] } },
-      { upsert: true }
-    );
+    /* ------------ Load Root Document ------------ */
+    // Ensure root doc exists
+await FoodEntry.updateOne(
+  { userId },
+  { $setOnInsert: { userId, nutritionByDate: [] } },
+  { upsert: true }
+);
 
-    let userFood = await FoodEntry.findOne({ userId });
+// Always fetch fresh, hydrated doc
+let userFood = await FoodEntry.findOne({ userId });
 
-    /* ------------ Ensure Year / Month / Day ------------ */
+
+    /* ------------ Ensure Year ------------ */
     let yearDoc = userFood.nutritionByDate.find((e) => e.year === year);
     if (!yearDoc) {
       yearDoc = { year, months: [] };
       userFood.nutritionByDate.push(yearDoc);
     }
 
+    /* ------------ Ensure Month ------------ */
     let monthDoc = yearDoc.months.find((e) => e.month === month);
     if (!monthDoc) {
       monthDoc = { month, days: [] };
       yearDoc.months.push(monthDoc);
     }
 
+    /* ------------ Ensure Day ------------ */
     let dayDoc = monthDoc.days.find((e) => e.day === day);
     if (!dayDoc) {
       dayDoc = {
@@ -594,7 +437,7 @@ router.post("/addFood", upload.single("image"), async (req, res) => {
       monthDoc.days.push(dayDoc);
     }
 
-    /* ------------ Update totals ------------ */
+    /* ------------ Update Totals ------------ */
     dayDoc.calories += ai.calories;
     dayDoc.protein += ai.protein;
     dayDoc.fat += ai.fat;
@@ -605,7 +448,6 @@ router.post("/addFood", upload.single("image"), async (req, res) => {
     if (isGood) dayDoc.goodCalories += calories;
     else dayDoc.badCalories += calories;
 
-    /* ------------ Push food item ------------ */
     dayDoc.foodItems.push(foodItem);
 
     userFood.markModified("nutritionByDate");
@@ -619,10 +461,147 @@ router.post("/addFood", upload.single("image"), async (req, res) => {
     });
 
   } catch (err) {
-    console.error("Error in /addFood:", err);
+    console.error(err);
     return res.status(500).json({ error: err.message });
   }
 });
+
+
+
+
+/* =========================================================
+  ADD FOOD FROM JSON ONLY  
+  (No AI, No image, No custom text)
+========================================================= */
+router.post("/addJsonFood", async (req, res) => {
+  try {
+    const { userId, foodData } = req.body;
+    if (!userId) return res.status(400).json({ error: "userId required" });
+    if (!foodData) return res.status(400).json({ error: "foodData required" });
+
+    // Ensure JSON is properly parsed
+    let data = foodData;
+    if (typeof foodData === "string") {
+      try {
+        data = JSON.parse(foodData);
+      } catch {
+        return res.status(400).json({ error: "Invalid JSON in foodData" });
+      }
+    }
+
+    /* ------------ Extract nutrition values from your JSON ------------ */
+    const name = data.name || "Unknown Food";
+
+    const clean = (v) => {
+      if (v === undefined || v === null) return 0;
+      if (typeof v === "string") v = v.replace(/[^\d.-]/g, "");
+      const n = Number(v);
+      return isNaN(n) ? 0 : n;
+    };
+
+    const calories = clean(data.calories);
+    const protein  = clean(data.protein_g || data.protein);
+    const fat      = clean(data.fat_g || data.fat);
+    const carbs    = clean(data.carbs_g || data.carbs);
+    const sugar    = clean(data.sugar_g || data.sugar);
+    const calcium  = clean(data.calcium_mg || data.calcium);
+
+    // Default tag
+    const healthTag = calories > 350 || fat > 15 || sugar > 15 ? "bad_to_have" : "good_to_have";
+
+    /* ------------ IST DATE ------------ */
+    const nowIST = getISTDate();
+    const year = nowIST.getFullYear();
+    const month = nowIST.getMonth() + 1;
+    const day = nowIST.getDate();
+
+    const foodItem = {
+      name,
+      label: name,
+      healthTag,
+      calories,
+      protein,
+      fat,
+      carbs,
+      sugar,
+      calcium,
+      sourceType: "json",
+      createdAt: getISTDate().toISOString()
+    };
+
+    /* ------------ Ensure Root Document ------------ */
+    await FoodEntry.updateOne(
+      { userId },
+      { $setOnInsert: { userId, nutritionByDate: [] } },
+      { upsert: true }
+    );
+
+    const userFood = await FoodEntry.findOne({ userId });
+
+    /* ------------ Ensure Year ------------ */
+    let yearDoc = userFood.nutritionByDate.find((e) => e.year === year);
+    if (!yearDoc) {
+      yearDoc = { year, months: [] };
+      userFood.nutritionByDate.push(yearDoc);
+    }
+
+    /* ------------ Ensure Month ------------ */
+    let monthDoc = yearDoc.months.find((e) => e.month === month);
+    if (!monthDoc) {
+      monthDoc = { month, days: [] };
+      yearDoc.months.push(monthDoc);
+    }
+
+    /* ------------ Ensure Day ------------ */
+    let dayDoc = monthDoc.days.find((e) => e.day === day);
+    if (!dayDoc) {
+      dayDoc = {
+        day,
+        calories: 0,
+        protein: 0,
+        fat: 0,
+        carbs: 0,
+        sugar: 0,
+        calcium: 0,
+        goodCalories: 0,
+        badCalories: 0,
+        foodItems: [],
+      };
+      monthDoc.days.push(dayDoc);
+    }
+
+    /* ------------ Update Aggregates ------------ */
+    dayDoc.calories += calories;
+    dayDoc.protein  += protein;
+    dayDoc.fat      += fat;
+    dayDoc.carbs    += carbs;
+    dayDoc.sugar    += sugar;
+    dayDoc.calcium  += calcium;
+
+    if (healthTag === "good_to_have") dayDoc.goodCalories += calories;
+    else dayDoc.badCalories += calories;
+
+    /* ------------ Push Food Item ------------ */
+    dayDoc.foodItems.push(foodItem);
+
+    userFood.markModified("nutritionByDate");
+    await userFood.save();
+
+    return res.json({
+      message: "JSON food added successfully",
+      today: `${day}/${month}/${year}`,
+      foodItem,
+      updatedDay: dayDoc,
+      nutritionByDate: userFood.nutritionByDate
+    });
+
+  } catch (err) {
+    console.error("Error in /addJsonFood:", err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+
 
 
 /* =========================================================
