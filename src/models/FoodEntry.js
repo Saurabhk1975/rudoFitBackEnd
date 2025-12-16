@@ -66,15 +66,20 @@ const FoodDailySchema = new mongoose.Schema(
       carbs: { type: Number, default: 0 },
       sugar: { type: Number, default: 0 },
       calcium: { type: Number, default: 0 },
+
       goodCalories: { type: Number, default: 0 },
       badCalories: { type: Number, default: 0 },
+      avgCalories: { type: Number, default: 0 },
     },
 
     foodItems: [
       {
         name: String,
         label: String,
-        healthTag: String,
+        healthTag: {
+          type: String,
+          enum: ["good_to_have", "bad_to_have", "average"],
+        },
         calories: Number,
         protein: Number,
         fat: Number,
@@ -93,4 +98,3 @@ const FoodDailySchema = new mongoose.Schema(
 FoodDailySchema.index({ userId: 1, date: 1 }, { unique: true });
 
 module.exports = mongoose.model("FoodDaily", FoodDailySchema);
-
