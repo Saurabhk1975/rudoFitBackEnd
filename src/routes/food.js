@@ -176,23 +176,32 @@ router.get("/today/:userId", async (req, res) => {
   });
 });
 
+
+//Weekly
 router.get("/weekly/:userId", async (req, res) => {
   const data = await FoodEntry.find({ userId: req.params.userId })
-    .sort({ date: -1 })
+    .sort({ createdAt: -1 }) // 🔥 FIX
     .limit(7);
 
   res.json({ days: data.reverse() });
 });
+
+// Monthly
 router.get("/monthly/:userId", async (req, res) => {
   const now = getISTDate();
+
   const data = await FoodEntry.find({
     userId: req.params.userId,
     year: now.getFullYear(),
     month: now.getMonth() + 1,
   }).sort({ day: 1 });
 
-  res.json({ days: data });
+  res.json({
+    count: data.length, // 👈 debug
+    days: data,
+  });
 });
+
 router.post("/range", async (req, res) => {
   const { userId, startDate, endDate } = req.body;
 
