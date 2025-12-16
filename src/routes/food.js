@@ -230,37 +230,57 @@ router.get("/today/:userId", async (req, res) => {
 //     res.status(500).json({ error: err.message });
 //   }
 // });
+// Weekly (last 7 days, IST-safe, zero-filled)
 router.get("/weekly/:userId", async (req, res) => {
   try {
     const { userId } = req.params;
     const today = getISTDate();
 
-    // last 7 days incl today
-    const dates = [];
+    // Build last 7 days (IST calendar days)
+    const daysMeta = [];
     for (let i = 6; i >= 0; i--) {
       const d = new Date(today);
       d.setDate(today.getDate() - i);
-      dates.push(toISODate(d));
+
+      daysMeta.push({
+        year: d.getFullYear(),
+        month: d.getMonth() + 1,
+        day: d.getDate(),
+        iso: toISODate(d),
+      });
     }
 
+    // Fetch matching DB entries
     const docs = await FoodEntry.find({
       userId,
-      date: { $gte: dates[0], $lte: dates[6] },
+      $or: daysMeta.map(d => ({
+        year: d.year,
+        month: d.month,
+        day: d.day,
+      })),
     }).lean();
 
+    // Map by Y-M-D key
     const map = {};
-    docs.forEach(d => map[d.date] = d);
+    docs.forEach(d => {
+      map[`${d.year}-${d.month}-${d.day}`] = d;
+    });
 
-    const days = dates.map(date => {
-      if (map[date]) {
+    // Build response
+    const days = daysMeta.map(d => {
+      const key = `${d.year}-${d.month}-${d.day}`;
+
+      if (map[key]) {
         return {
-          date,
-          totals: map[date].totals,
-          items: map[date].foodItems || [],
+          date: d.iso,
+          totals: map[key].totals,
+          items: map[key].foodItems || [],
+          message: "Food eaten",
         };
       }
+
       return {
-        date,
+        date: d.iso,
         totals: {
           calories: 0,
           protein: 0,
@@ -273,6 +293,7 @@ router.get("/weekly/:userId", async (req, res) => {
           avgCalories: 0,
         },
         items: [],
+        message: "No food eaten",
       };
     });
 
@@ -282,6 +303,7 @@ router.get("/weekly/:userId", async (req, res) => {
       days,
     });
   } catch (err) {
+    console.error("Weekly error:", err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -310,43 +332,51 @@ router.get("/weekly/:userId", async (req, res) => {
 //     res.status(500).json({ error: err.message });
 //   }
 // });
-router.get("/monthly/:userId", async (req, res) => {
+// Monthly (year + month aware, zero-filled, IST-safe)
+router.get("/monthly/:userId/:year/:month", async (req, res) => {
   try {
-    const { userId } = req.params;
-    const now = getISTDate();
+    const { userId, year, month } = req.params;
 
-    const year = now.getFullYear();
-    const month = now.getMonth(); // 0-based
+    const y = Number(year);
+    const m = Number(month); // 1–12
 
-    const start = new Date(year, month, 1);
-    const end = new Date(year, month + 1, 0);
+    if (m < 1 || m > 12) {
+      return res.status(400).json({ error: "Invalid month" });
+    }
 
-    const startISO = toISODate(start);
-    const endISO = toISODate(end);
+    const todayIST = getISTDate();
+    const isCurrentMonth =
+      y === todayIST.getFullYear() && m === todayIST.getMonth() + 1;
 
+    const lastDayOfMonth = new Date(y, m, 0).getDate();
+    const endDay = isCurrentMonth ? todayIST.getDate() : lastDayOfMonth;
+
+    // Fetch existing data
     const docs = await FoodEntry.find({
       userId,
-      date: { $gte: startISO, $lte: endISO },
+      year: y,
+      month: m,
     }).lean();
 
+    // Build map by DAY (not date string)
     const map = {};
-    docs.forEach(d => map[d.date] = d);
+    docs.forEach(d => {
+      map[d.day] = d;
+    });
 
     const days = [];
-    let cursor = new Date(start);
 
-    while (cursor <= end) {
-      const iso = toISODate(cursor);
-
-      if (map[iso]) {
+    for (let day = 1; day <= endDay; day++) {
+      if (map[day]) {
         days.push({
-          date: iso,
-          totals: map[iso].totals,
-          items: map[iso].foodItems || [],
+          date: `${y}-${String(m).padStart(2, "0")}-${String(day).padStart(2, "0")}`,
+          totals: map[day].totals,
+          items: map[day].foodItems || [],
+          message: "Food eaten",
         });
       } else {
         days.push({
-          date: iso,
+          date: `${y}-${String(m).padStart(2, "0")}-${String(day).padStart(2, "0")}`,
           totals: {
             calories: 0,
             protein: 0,
@@ -359,19 +389,19 @@ router.get("/monthly/:userId", async (req, res) => {
             avgCalories: 0,
           },
           items: [],
+          message: "No food eaten",
         });
       }
-
-      cursor.setDate(cursor.getDate() + 1);
     }
 
     res.json({
-      year,
-      month: month + 1,
+      year: y,
+      month: m,
       daysCount: days.length,
       days,
     });
   } catch (err) {
+    console.error("Monthly error:", err);
     res.status(500).json({ error: err.message });
   }
 });
