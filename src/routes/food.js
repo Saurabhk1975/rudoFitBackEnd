@@ -165,53 +165,293 @@ router.post("/addFood", upload.single("image"), async (req, res) => {
 });
 
 
+// router.get("/today/:userId", async (req, res) => {
+//   const date = toISODate(getISTDate());
+//   const doc = await FoodEntry.findOne({ userId: req.params.userId, date });
+
+//   res.json({
+//     date,
+//     totals: doc?.totals || {},
+//     items: doc?.foodItems || [],
+//   });
+// });
+
 router.get("/today/:userId", async (req, res) => {
-  const date = toISODate(getISTDate());
-  const doc = await FoodEntry.findOne({ userId: req.params.userId, date });
+  try {
+    const today = toISODate(getISTDate());
+    const { userId } = req.params;
 
-  res.json({
-    date,
-    totals: doc?.totals || {},
-    items: doc?.foodItems || [],
-  });
+    const doc = await FoodEntry.findOne({ userId, date: today }).lean();
+
+    if (doc) {
+      return res.json({
+        date: today,
+        totals: doc.totals,
+        items: doc.foodItems || [],
+        message: "Food eaten today",
+      });
+    }
+
+    // No entry today → return zero
+    res.json({
+      date: today,
+      totals: {
+        calories: 0,
+        protein: 0,
+        fat: 0,
+        carbs: 0,
+        sugar: 0,
+        calcium: 0,
+        goodCalories: 0,
+        badCalories: 0,
+        avgCalories: 0,
+      },
+      items: [],
+      message: "No food eaten today",
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
-
 
 //Weekly
-router.get("/weekly/:userId", async (req, res) => {
-  const data = await FoodEntry.find({ userId: req.params.userId })
-    .sort({ createdAt: -1 }) // 🔥 FIX
-    .limit(7);
+// router.get("/weekly/:userId", async (req, res) => {
+//   try {
+//     const data = await FoodEntry.find({ userId: req.params.userId })
+//       .sort({ createdAt: -1 })
+//       .limit(7)
+//       .select("date totals");
 
-  res.json({ days: data.reverse() });
+//     res.json({
+//       count: data.length,
+//       days: data.reverse(),
+//     });
+//   } catch (err) {
+//     res.status(500).json({ error: err.message });
+//   }
+// });
+router.get("/weekly/:userId", async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const today = getISTDate();
+
+    // last 7 days incl today
+    const dates = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(today);
+      d.setDate(today.getDate() - i);
+      dates.push(toISODate(d));
+    }
+
+    const docs = await FoodEntry.find({
+      userId,
+      date: { $gte: dates[0], $lte: dates[6] },
+    }).lean();
+
+    const map = {};
+    docs.forEach(d => map[d.date] = d);
+
+    const days = dates.map(date => {
+      if (map[date]) {
+        return {
+          date,
+          totals: map[date].totals,
+          items: map[date].foodItems || [],
+        };
+      }
+      return {
+        date,
+        totals: {
+          calories: 0,
+          protein: 0,
+          fat: 0,
+          carbs: 0,
+          sugar: 0,
+          calcium: 0,
+          goodCalories: 0,
+          badCalories: 0,
+          avgCalories: 0,
+        },
+        items: [],
+      };
+    });
+
+    res.json({
+      range: "last_7_days",
+      daysCount: days.length,
+      days,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
+
+
 
 // Monthly
+// router.get("/monthly/:userId", async (req, res) => {
+//   try {
+//     const { userId } = req.params;
+//     const now = getISTDate();
+
+//     const start = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2,"0")}-01`;
+//     const end = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2,"0")}-31`;
+
+//     const data = await FoodEntry.find({
+//       userId,
+//       date: { $gte: start, $lte: end },
+//     }).sort({ date: 1 });
+
+//     res.json({
+//       count: data.length,
+//       days: data,
+//     });
+//   } catch (err) {
+//     res.status(500).json({ error: err.message });
+//   }
+// });
 router.get("/monthly/:userId", async (req, res) => {
-  const now = getISTDate();
+  try {
+    const { userId } = req.params;
+    const now = getISTDate();
 
-  const data = await FoodEntry.find({
-    userId: req.params.userId,
-    year: now.getFullYear(),
-    month: now.getMonth() + 1,
-  }).sort({ day: 1 });
+    const year = now.getFullYear();
+    const month = now.getMonth(); // 0-based
 
-  res.json({
-    count: data.length, // 👈 debug
-    days: data,
-  });
+    const start = new Date(year, month, 1);
+    const end = new Date(year, month + 1, 0);
+
+    const startISO = toISODate(start);
+    const endISO = toISODate(end);
+
+    const docs = await FoodEntry.find({
+      userId,
+      date: { $gte: startISO, $lte: endISO },
+    }).lean();
+
+    const map = {};
+    docs.forEach(d => map[d.date] = d);
+
+    const days = [];
+    let cursor = new Date(start);
+
+    while (cursor <= end) {
+      const iso = toISODate(cursor);
+
+      if (map[iso]) {
+        days.push({
+          date: iso,
+          totals: map[iso].totals,
+          items: map[iso].foodItems || [],
+        });
+      } else {
+        days.push({
+          date: iso,
+          totals: {
+            calories: 0,
+            protein: 0,
+            fat: 0,
+            carbs: 0,
+            sugar: 0,
+            calcium: 0,
+            goodCalories: 0,
+            badCalories: 0,
+            avgCalories: 0,
+          },
+          items: [],
+        });
+      }
+
+      cursor.setDate(cursor.getDate() + 1);
+    }
+
+    res.json({
+      year,
+      month: month + 1,
+      daysCount: days.length,
+      days,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
+
 
 router.post("/range", async (req, res) => {
-  const { userId, startDate, endDate } = req.body;
+  try {
+    const { userId, startDate, endDate } = req.body;
+    if (!userId || !startDate || !endDate) {
+      return res.status(400).json({ error: "userId, startDate, endDate required" });
+    }
 
-  const data = await FoodEntry.find({
-    userId,
-    date: { $gte: startDate, $lte: endDate },
-  }).sort({ date: 1 });
+    // 1️⃣ Fetch existing data
+    const docs = await FoodEntry.find({
+      userId,
+      date: { $gte: startDate, $lte: endDate },
+    }).lean();
 
-  res.json({ days: data });
+    // 2️⃣ Build map: date -> doc
+    const map = {};
+    docs.forEach(d => {
+      map[d.date] = d;
+    });
+
+    // 3️⃣ Generate full date range
+    const results = [];
+    let cursor = new Date(startDate);
+    const end = new Date(endDate);
+
+    while (cursor <= end) {
+      const y = cursor.getFullYear();
+      const m = String(cursor.getMonth() + 1).padStart(2, "0");
+      const d = String(cursor.getDate()).padStart(2, "0");
+      const iso = `${y}-${m}-${d}`;
+
+      if (map[iso]) {
+        // existing day
+        results.push({
+          date: iso,
+          totals: map[iso].totals,
+          items: map[iso].foodItems || [],
+          message: "Food eaten",
+        });
+      } else {
+        // missing day → zero
+        results.push({
+          date: iso,
+          totals: {
+            calories: 0,
+            protein: 0,
+            fat: 0,
+            carbs: 0,
+            sugar: 0,
+            calcium: 0,
+            goodCalories: 0,
+            badCalories: 0,
+            avgCalories: 0,
+          },
+          items: [],
+          message: "No food eaten",
+        });
+      }
+
+      cursor.setDate(cursor.getDate() + 1);
+    }
+
+    res.json({
+      userId,
+      from: startDate,
+      to: endDate,
+      daysCount: results.length,
+      days: results,
+    });
+
+  } catch (err) {
+    console.error("Range error:", err);
+    res.status(500).json({ error: err.message });
+  }
 });
+
 router.get("/recent/:userId", async (req, res) => {
   const items = await FoodEntry.aggregate([
     { $match: { userId: req.params.userId } },
@@ -223,6 +463,47 @@ router.get("/recent/:userId", async (req, res) => {
 
   res.json({ recent: items });
 });
+
+// Yearly
+router.get("/yearly/:userId/:year", async (req, res) => {
+  try {
+    const { userId, year } = req.params;
+
+    const data = await FoodEntry.aggregate([
+      {
+        $match: {
+          userId,
+          year: Number(year),
+        },
+      },
+      {
+        $group: {
+          _id: "$month",
+          calories: { $sum: "$totals.calories" },
+          protein: { $sum: "$totals.protein" },
+          fat: { $sum: "$totals.fat" },
+          carbs: { $sum: "$totals.carbs" },
+        },
+      },
+      { $sort: { _id: 1 } },
+    ]);
+
+    res.json({
+      year: Number(year),
+      months: data.map((m) => ({
+        month: m._id,
+        calories: m.calories,
+        protein: m.protein,
+        fat: m.fat,
+        carbs: m.carbs,
+      })),
+    });
+  } catch (err) {
+    console.error("Yearly error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 
 
 module.exports = router;
