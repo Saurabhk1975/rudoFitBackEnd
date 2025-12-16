@@ -50,7 +50,7 @@
 
 const mongoose = require("mongoose");
 
-const FoodDailySchema = new mongoose.Schema(
+const FoodEntrySchema = new mongoose.Schema(
   {
     userId: { type: String, index: true },
 
@@ -95,6 +95,6 @@ const FoodDailySchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-FoodDailySchema.index({ userId: 1, date: 1 }, { unique: true });
+FoodEntrySchema.index({ userId: 1, date: 1 }, { unique: true });
 
-module.exports = mongoose.model("FoodDaily", FoodDailySchema);
+module.exports = mongoose.model("FoodEntry", FoodEntrySchema);
