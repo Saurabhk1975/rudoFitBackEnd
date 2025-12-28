@@ -350,7 +350,6 @@ router.get("/weekly/:userId", async (req, res) => {
       calcium: 0,
       goodCalories: 0,
       badCalories: 0,
-      avgCalories: 0,
     };
 
     let loggedDays = 0;
@@ -390,7 +389,6 @@ router.get("/weekly/:userId", async (req, res) => {
           calcium: 0,
           goodCalories: 0,
           badCalories: 0,
-          avgCalories: 0,
         },
         items: [],
         message: "No food eaten",
@@ -400,10 +398,21 @@ router.get("/weekly/:userId", async (req, res) => {
     const totalDays = days.length;
     const missedDays = totalDays - loggedDays;
 
-    totals_range.avgCalories =
-      loggedDays > 0
-        ? Math.round(totals_range.calories / loggedDays)
-        : 0;
+    // ✅ NEW: averages object
+    const averages = {
+      calories: loggedDays ? Math.round(totals_range.calories / loggedDays) : 0,
+      protein: loggedDays ? +(totals_range.protein / loggedDays).toFixed(1) : 0,
+      fat: loggedDays ? +(totals_range.fat / loggedDays).toFixed(1) : 0,
+      carbs: loggedDays ? +(totals_range.carbs / loggedDays).toFixed(1) : 0,
+      sugar: loggedDays ? +(totals_range.sugar / loggedDays).toFixed(1) : 0,
+      calcium: loggedDays ? +(totals_range.calcium / loggedDays).toFixed(1) : 0,
+      goodCalories: loggedDays
+        ? Math.round(totals_range.goodCalories / loggedDays)
+        : 0,
+      badCalories: loggedDays
+        ? Math.round(totals_range.badCalories / loggedDays)
+        : 0,
+    };
 
     res.json({
       range: "last_7_days",
@@ -411,6 +420,7 @@ router.get("/weekly/:userId", async (req, res) => {
       loggedDays,
       missedDays,
       totals_range,
+      averages, // 👈 THIS IS WHAT YOU WANTED
       days,
     });
   } catch (err) {
@@ -556,7 +566,6 @@ router.get("/monthly/:userId/:year/:month", async (req, res) => {
       calcium: 0,
       goodCalories: 0,
       badCalories: 0,
-      avgCalories: 0,
     };
 
     let loggedDays = 0;
@@ -596,7 +605,6 @@ router.get("/monthly/:userId/:year/:month", async (req, res) => {
             calcium: 0,
             goodCalories: 0,
             badCalories: 0,
-            avgCalories: 0,
           },
           items: [],
           message: "No food eaten",
@@ -607,10 +615,21 @@ router.get("/monthly/:userId/:year/:month", async (req, res) => {
     const totalDays = days.length;
     const missedDays = totalDays - loggedDays;
 
-    totals_range.avgCalories =
-      loggedDays > 0
-        ? Math.round(totals_range.calories / loggedDays)
-        : 0;
+    // ✅ NEW: averages for monthly
+    const averages = {
+      calories: loggedDays ? Math.round(totals_range.calories / loggedDays) : 0,
+      protein: loggedDays ? +(totals_range.protein / loggedDays).toFixed(1) : 0,
+      fat: loggedDays ? +(totals_range.fat / loggedDays).toFixed(1) : 0,
+      carbs: loggedDays ? +(totals_range.carbs / loggedDays).toFixed(1) : 0,
+      sugar: loggedDays ? +(totals_range.sugar / loggedDays).toFixed(1) : 0,
+      calcium: loggedDays ? +(totals_range.calcium / loggedDays).toFixed(1) : 0,
+      goodCalories: loggedDays
+        ? Math.round(totals_range.goodCalories / loggedDays)
+        : 0,
+      badCalories: loggedDays
+        ? Math.round(totals_range.badCalories / loggedDays)
+        : 0,
+    };
 
     res.json({
       year: y,
@@ -619,6 +638,7 @@ router.get("/monthly/:userId/:year/:month", async (req, res) => {
       loggedDays,
       missedDays,
       totals_range,
+      averages, // 👈 same as weekly
       days,
     });
   } catch (err) {
