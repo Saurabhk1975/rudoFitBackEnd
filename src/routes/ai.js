@@ -165,7 +165,73 @@ const client = new OpenAI({
   baseURL: "https://api.groq.com/openai/v1",
 });
 
-const foodKeywords = [ /* SAME LIST AS YOUR CODE */ ];
+const foodKeywords = ["food",
+  "calorie",
+  "diet",
+  "nutrition",
+  "protein",
+  "carbs",
+  "fat",
+  "meal",
+  "fitness",
+  "weight",
+  "muscle",
+  "exercise",
+  "weight loss",
+  "weight gain",
+  "healthy eating",
+  "vitamins",
+  "minerals",
+  "hydration",
+  "snacks",
+  "breakfast",
+  "lunch",
+  "dinner",
+  "veggies",
+  "fruits",
+  "workout",
+  "training",
+  "endurance",
+  "strength",
+  "cardio",
+  "wellness",
+  "lifestyle",
+  "supplements",
+  "meal plan",
+  "portion size",
+  "dietary restrictions",
+  "allergies",
+  "gluten-free",
+  "vegan",
+  "vegetarian",
+  "keto",
+  "paleo",
+  "intermittent fasting",
+  "macros",
+  "micros",
+  "bodybuilding",
+  "fitness goals",
+  "physical activity",
+  "rest days",
+  "recovery",
+  "metabolism",
+  "caloric intake",
+  "healthy fats",
+  "sugars",
+  "fiber",
+  "cholesterol",
+  "blood pressure",
+  "diabetes",
+  "heart health",
+  "mental health",
+  "stress management",
+  "sleep quality",
+  "hydration",
+  "water intake",
+  "immune system",
+  "antioxidants",
+  "Thanksgiving",
+  "Thank you" ];
 
 // how many recent messages to send
 const RECENT_MESSAGE_LIMIT = 6;
@@ -187,7 +253,7 @@ router.post("/talkToAI", async (req, res) => {
     if (!isFoodQuery) {
       return res.json({
         response:
-          "😅 I only answer food, diet, calories & fitness related questions.",
+          "😅 I only answer food, diet, calories & fitness-related questions."
       });
     }
 
@@ -207,14 +273,14 @@ router.post("/talkToAI", async (req, res) => {
       {
         role: "system",
         content:
-          "You are a diet and fitness assistant. Answer ONLY food, calories, nutrition and fitness topics."
+          "You are a diet and fitness assistant. Answer ONLY food, calories, nutrition, and fitness topics."
       }
     ];
 
     if (session.summary) {
       aiMessages.push({
         role: "system",
-        content: `Conversation summary so far: ${session.summary}`
+        content: `Conversation summary so far: ${session.summary}.`
       });
     }
 
