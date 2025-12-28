@@ -313,7 +313,7 @@ router.get("/weekly/:userId", async (req, res) => {
     const { userId } = req.params;
     const today = getISTDate();
 
-    // Build last 7 days (IST calendar days)
+    // Build last 7 days
     const daysMeta = [];
     for (let i = 6; i >= 0; i--) {
       const d = new Date(today);
@@ -327,7 +327,6 @@ router.get("/weekly/:userId", async (req, res) => {
       });
     }
 
-    // Fetch DB entries
     const docs = await FoodEntry.find({
       userId,
       $or: daysMeta.map(d => ({
@@ -337,13 +336,11 @@ router.get("/weekly/:userId", async (req, res) => {
       })),
     }).lean();
 
-    // Map by Y-M-D
     const map = {};
     docs.forEach(d => {
       map[`${d.year}-${d.month}-${d.day}`] = d;
     });
 
-    // 🔥 RANGE TOTAL (7 DAYS)
     const totals_range = {
       calories: 0,
       protein: 0,
@@ -356,14 +353,15 @@ router.get("/weekly/:userId", async (req, res) => {
       avgCalories: 0,
     };
 
-    // Build response days
+    let loggedDays = 0;
+
     const days = daysMeta.map(d => {
       const key = `${d.year}-${d.month}-${d.day}`;
 
       if (map[key]) {
         const t = map[key].totals || {};
+        loggedDays++;
 
-        // 🔥 accumulate 7-day totals
         totals_range.calories += t.calories || 0;
         totals_range.protein += t.protein || 0;
         totals_range.fat += t.fat || 0;
@@ -372,7 +370,6 @@ router.get("/weekly/:userId", async (req, res) => {
         totals_range.calcium += t.calcium || 0;
         totals_range.goodCalories += t.goodCalories || 0;
         totals_range.badCalories += t.badCalories || 0;
-        totals_range.avgCalories += t.avgCalories || 0;
 
         return {
           date: d.iso,
@@ -400,10 +397,20 @@ router.get("/weekly/:userId", async (req, res) => {
       };
     });
 
+    const totalDays = days.length;
+    const missedDays = totalDays - loggedDays;
+
+    totals_range.avgCalories =
+      loggedDays > 0
+        ? Math.round(totals_range.calories / loggedDays)
+        : 0;
+
     res.json({
       range: "last_7_days",
-      daysCount: days.length,
-      totals_range, // ✅ aggregated 7-day total
+      totalDays,
+      loggedDays,
+      missedDays,
+      totals_range,
       days,
     });
   } catch (err) {
@@ -411,6 +418,9 @@ router.get("/weekly/:userId", async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+
+ 
 
 
 // Monthly
@@ -513,7 +523,7 @@ router.get("/monthly/:userId/:year/:month", async (req, res) => {
     const { userId, year, month } = req.params;
 
     const y = Number(year);
-    const m = Number(month); // 1–12
+    const m = Number(month);
 
     if (m < 1 || m > 12) {
       return res.status(400).json({ error: "Invalid month" });
@@ -526,20 +536,17 @@ router.get("/monthly/:userId/:year/:month", async (req, res) => {
     const lastDayOfMonth = new Date(y, m, 0).getDate();
     const endDay = isCurrentMonth ? todayIST.getDate() : lastDayOfMonth;
 
-    // Fetch existing data
     const docs = await FoodEntry.find({
       userId,
       year: y,
       month: m,
     }).lean();
 
-    // Map by DAY
     const map = {};
     docs.forEach(d => {
       map[d.day] = d;
     });
 
-    // 🔥 MONTH RANGE TOTAL
     const totals_range = {
       calories: 0,
       protein: 0,
@@ -552,6 +559,7 @@ router.get("/monthly/:userId/:year/:month", async (req, res) => {
       avgCalories: 0,
     };
 
+    let loggedDays = 0;
     const days = [];
 
     for (let day = 1; day <= endDay; day++) {
@@ -559,8 +567,8 @@ router.get("/monthly/:userId/:year/:month", async (req, res) => {
 
       if (map[day]) {
         const t = map[day].totals || {};
+        loggedDays++;
 
-        // 🔥 accumulate monthly totals
         totals_range.calories += t.calories || 0;
         totals_range.protein += t.protein || 0;
         totals_range.fat += t.fat || 0;
@@ -569,7 +577,6 @@ router.get("/monthly/:userId/:year/:month", async (req, res) => {
         totals_range.calcium += t.calcium || 0;
         totals_range.goodCalories += t.goodCalories || 0;
         totals_range.badCalories += t.badCalories || 0;
-        totals_range.avgCalories += t.avgCalories || 0;
 
         days.push({
           date,
@@ -597,11 +604,21 @@ router.get("/monthly/:userId/:year/:month", async (req, res) => {
       }
     }
 
+    const totalDays = days.length;
+    const missedDays = totalDays - loggedDays;
+
+    totals_range.avgCalories =
+      loggedDays > 0
+        ? Math.round(totals_range.calories / loggedDays)
+        : 0;
+
     res.json({
       year: y,
       month: m,
-      daysCount: days.length,
-      totals_range, // ✅ monthly aggregate
+      totalDays,
+      loggedDays,
+      missedDays,
+      totals_range,
       days,
     });
   } catch (err) {
