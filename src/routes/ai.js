@@ -263,4 +263,43 @@ Rules:
   }
 });
 
+
+router.get("/getChat/:userId", async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    if (!userId) {
+      return res.status(400).json({ error: "userId is required" });
+    }
+
+    const session = await ChatSession.findOne({ userId }).lean();
+
+    if (!session) {
+      return res.json({
+        userId,
+        summary: "",
+        messages: [],
+        message: "No chat history found"
+      });
+    }
+
+    return res.json({
+      userId: session.userId,
+      summary: session.summary || "",
+      totalMessages: session.messages.length,
+      messages: session.messages.map(m => ({
+        role: m.role,           // user | assistant
+        content: m.content,
+        createdAt: m.createdAt
+      }))
+    });
+
+  } catch (err) {
+    console.error("GET CHAT ERROR:", err);
+    res.status(500).json({ error: "Failed to fetch chat history" });
+  }
+});
+
+
+
 module.exports = router;
