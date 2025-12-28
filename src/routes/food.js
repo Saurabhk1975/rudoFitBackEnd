@@ -436,6 +436,78 @@ router.get("/weekly/:userId", async (req, res) => {
 //   }
 // });
 // Monthly (year + month aware, zero-filled, IST-safe)
+// router.get("/monthly/:userId/:year/:month", async (req, res) => {
+//   try {
+//     const { userId, year, month } = req.params;
+
+//     const y = Number(year);
+//     const m = Number(month); // 1–12
+
+//     if (m < 1 || m > 12) {
+//       return res.status(400).json({ error: "Invalid month" });
+//     }
+
+//     const todayIST = getISTDate();
+//     const isCurrentMonth =
+//       y === todayIST.getFullYear() && m === todayIST.getMonth() + 1;
+
+//     const lastDayOfMonth = new Date(y, m, 0).getDate();
+//     const endDay = isCurrentMonth ? todayIST.getDate() : lastDayOfMonth;
+
+//     // Fetch existing data
+//     const docs = await FoodEntry.find({
+//       userId,
+//       year: y,
+//       month: m,
+//     }).lean();
+
+//     // Build map by DAY (not date string)
+//     const map = {};
+//     docs.forEach(d => {
+//       map[d.day] = d;
+//     });
+
+//     const days = [];
+
+//     for (let day = 1; day <= endDay; day++) {
+//       if (map[day]) {
+//         days.push({
+//           date: `${y}-${String(m).padStart(2, "0")}-${String(day).padStart(2, "0")}`,
+//           totals: map[day].totals,
+//           items: map[day].foodItems || [],
+//           message: "Food eaten",
+//         });
+//       } else {
+//         days.push({
+//           date: `${y}-${String(m).padStart(2, "0")}-${String(day).padStart(2, "0")}`,
+//           totals: {
+//             calories: 0,
+//             protein: 0,
+//             fat: 0,
+//             carbs: 0,
+//             sugar: 0,
+//             calcium: 0,
+//             goodCalories: 0,
+//             badCalories: 0,
+//             avgCalories: 0,
+//           },
+//           items: [],
+//           message: "No food eaten",
+//         });
+//       }
+//     }
+
+//     res.json({
+//       year: y,
+//       month: m,
+//       daysCount: days.length,
+//       days,
+//     });
+//   } catch (err) {
+//     console.error("Monthly error:", err);
+//     res.status(500).json({ error: err.message });
+//   }
+// });
 router.get("/monthly/:userId/:year/:month", async (req, res) => {
   try {
     const { userId, year, month } = req.params;
@@ -461,25 +533,53 @@ router.get("/monthly/:userId/:year/:month", async (req, res) => {
       month: m,
     }).lean();
 
-    // Build map by DAY (not date string)
+    // Map by DAY
     const map = {};
     docs.forEach(d => {
       map[d.day] = d;
     });
 
+    // 🔥 MONTH RANGE TOTAL
+    const totals_range = {
+      calories: 0,
+      protein: 0,
+      fat: 0,
+      carbs: 0,
+      sugar: 0,
+      calcium: 0,
+      goodCalories: 0,
+      badCalories: 0,
+      avgCalories: 0,
+    };
+
     const days = [];
 
     for (let day = 1; day <= endDay; day++) {
+      const date = `${y}-${String(m).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+
       if (map[day]) {
+        const t = map[day].totals || {};
+
+        // 🔥 accumulate monthly totals
+        totals_range.calories += t.calories || 0;
+        totals_range.protein += t.protein || 0;
+        totals_range.fat += t.fat || 0;
+        totals_range.carbs += t.carbs || 0;
+        totals_range.sugar += t.sugar || 0;
+        totals_range.calcium += t.calcium || 0;
+        totals_range.goodCalories += t.goodCalories || 0;
+        totals_range.badCalories += t.badCalories || 0;
+        totals_range.avgCalories += t.avgCalories || 0;
+
         days.push({
-          date: `${y}-${String(m).padStart(2, "0")}-${String(day).padStart(2, "0")}`,
-          totals: map[day].totals,
+          date,
+          totals: t,
           items: map[day].foodItems || [],
           message: "Food eaten",
         });
       } else {
         days.push({
-          date: `${y}-${String(m).padStart(2, "0")}-${String(day).padStart(2, "0")}`,
+          date,
           totals: {
             calories: 0,
             protein: 0,
@@ -501,6 +601,7 @@ router.get("/monthly/:userId/:year/:month", async (req, res) => {
       year: y,
       month: m,
       daysCount: days.length,
+      totals_range, // ✅ monthly aggregate
       days,
     });
   } catch (err) {
@@ -508,6 +609,7 @@ router.get("/monthly/:userId/:year/:month", async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
 
 
 router.post("/range", async (req, res) => {
