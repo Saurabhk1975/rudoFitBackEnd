@@ -231,6 +231,83 @@ router.get("/today/:userId", async (req, res) => {
 //   }
 // });
 // Weekly (last 7 days, IST-safe, zero-filled)
+// router.get("/weekly/:userId", async (req, res) => {
+//   try {
+//     const { userId } = req.params;
+//     const today = getISTDate();
+
+//     // Build last 7 days (IST calendar days)
+//     const daysMeta = [];
+//     for (let i = 6; i >= 0; i--) {
+//       const d = new Date(today);
+//       d.setDate(today.getDate() - i);
+
+//       daysMeta.push({
+//         year: d.getFullYear(),
+//         month: d.getMonth() + 1,
+//         day: d.getDate(),
+//         iso: toISODate(d),
+//       });
+//     }
+
+//     // Fetch matching DB entries
+//     const docs = await FoodEntry.find({
+//       userId,
+//       $or: daysMeta.map(d => ({
+//         year: d.year,
+//         month: d.month,
+//         day: d.day,
+//       })),
+//     }).lean();
+
+//     // Map by Y-M-D key
+//     const map = {};
+//     docs.forEach(d => {
+//       map[`${d.year}-${d.month}-${d.day}`] = d;
+//     });
+
+//     // Build response
+//     const days = daysMeta.map(d => {
+//       const key = `${d.year}-${d.month}-${d.day}`;
+
+//       if (map[key]) {
+//         return {
+//           date: d.iso,
+//           totals: map[key].totals,
+//           items: map[key].foodItems || [],
+//           message: "Food eaten",
+//         };
+//       }
+
+//       return {
+//         date: d.iso,
+//         totals: {
+//           calories: 0,
+//           protein: 0,
+//           fat: 0,
+//           carbs: 0,
+//           sugar: 0,
+//           calcium: 0,
+//           goodCalories: 0,
+//           badCalories: 0,
+//           avgCalories: 0,
+//         },
+//         items: [],
+//         message: "No food eaten",
+//       };
+//     });
+
+//     res.json({
+//       range: "last_7_days",
+//       daysCount: days.length,
+//       days,
+//     });
+//   } catch (err) {
+//     console.error("Weekly error:", err);
+//     res.status(500).json({ error: err.message });
+//   }
+// });
+
 router.get("/weekly/:userId", async (req, res) => {
   try {
     const { userId } = req.params;
@@ -250,7 +327,7 @@ router.get("/weekly/:userId", async (req, res) => {
       });
     }
 
-    // Fetch matching DB entries
+    // Fetch DB entries
     const docs = await FoodEntry.find({
       userId,
       $or: daysMeta.map(d => ({
@@ -260,20 +337,46 @@ router.get("/weekly/:userId", async (req, res) => {
       })),
     }).lean();
 
-    // Map by Y-M-D key
+    // Map by Y-M-D
     const map = {};
     docs.forEach(d => {
       map[`${d.year}-${d.month}-${d.day}`] = d;
     });
 
-    // Build response
+    // 🔥 RANGE TOTAL (7 DAYS)
+    const totals_range = {
+      calories: 0,
+      protein: 0,
+      fat: 0,
+      carbs: 0,
+      sugar: 0,
+      calcium: 0,
+      goodCalories: 0,
+      badCalories: 0,
+      avgCalories: 0,
+    };
+
+    // Build response days
     const days = daysMeta.map(d => {
       const key = `${d.year}-${d.month}-${d.day}`;
 
       if (map[key]) {
+        const t = map[key].totals || {};
+
+        // 🔥 accumulate 7-day totals
+        totals_range.calories += t.calories || 0;
+        totals_range.protein += t.protein || 0;
+        totals_range.fat += t.fat || 0;
+        totals_range.carbs += t.carbs || 0;
+        totals_range.sugar += t.sugar || 0;
+        totals_range.calcium += t.calcium || 0;
+        totals_range.goodCalories += t.goodCalories || 0;
+        totals_range.badCalories += t.badCalories || 0;
+        totals_range.avgCalories += t.avgCalories || 0;
+
         return {
           date: d.iso,
-          totals: map[key].totals,
+          totals: t,
           items: map[key].foodItems || [],
           message: "Food eaten",
         };
@@ -300,6 +403,7 @@ router.get("/weekly/:userId", async (req, res) => {
     res.json({
       range: "last_7_days",
       daysCount: days.length,
+      totals_range, // ✅ aggregated 7-day total
       days,
     });
   } catch (err) {
@@ -307,7 +411,6 @@ router.get("/weekly/:userId", async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
-
 
 
 // Monthly
