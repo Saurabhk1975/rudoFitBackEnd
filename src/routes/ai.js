@@ -165,165 +165,90 @@ const client = new OpenAI({
   baseURL: "https://api.groq.com/openai/v1",
 });
 
-const foodKeywords = ["food",
-  "calorie",
-  "diet",
-  "nutrition",
-  "protein",
-  "carbs",
-  "fat",
-  "meal",
-  "fitness",
-  "weight",
-  "muscle",
-  "exercise",
-  "weight loss",
-  "weight gain",
-  "healthy eating",
-  "vitamins",
-  "minerals",
-  "hydration",
-  "snacks",
-  "breakfast",
-  "lunch",
-  "dinner",
-  "veggies",
-  "fruits",
-  "workout",
-  "training",
-  "endurance",
-  "strength",
-  "cardio",
-  "wellness",
-  "lifestyle",
-  "supplements",
-  "meal plan",
-  "portion size",
-  "dietary restrictions",
-  "allergies",
-  "gluten-free",
-  "vegan",
-  "vegetarian",
-  "keto",
-  "paleo",
-  "intermittent fasting",
-  "macros",
-  "micros",
-  "bodybuilding",
-  "fitness goals",
-  "physical activity",
-  "rest days",
-  "recovery",
-  "metabolism",
-  "caloric intake",
-  "healthy fats",
-  "sugars",
-  "fiber",
-  "cholesterol",
-  "blood pressure",
-  "diabetes",
-  "heart health",
-  "mental health",
-  "stress management",
-  "sleep quality",
-  "hydration",
-  "water intake",
-  "immune system",
-  "antioxidants",
-  "Thanksgiving",
-  "Thank you" ];
+// ❌ keywords sirf HARD BLOCK ke liye, memory ke liye nahi
+const foodKeywords = [
+  "food","diet","nutrition","protein","carbs","fat","meal",
+  "fitness","workout","calorie","weight","muscle"
+];
 
-// how many recent messages to send
 const RECENT_MESSAGE_LIMIT = 6;
-
-// summarize after every N messages
 const SUMMARY_TRIGGER_COUNT = 10;
 
 router.post("/talkToAI", async (req, res) => {
   try {
     const { userId, prompt } = req.body;
-
     if (!userId || !prompt) {
       return res.status(400).json({ error: "userId and prompt required" });
     }
 
-    const lowerPrompt = prompt.toLowerCase();
-    const isFoodQuery = foodKeywords.some(k => lowerPrompt.includes(k));
-
-    if (!isFoodQuery) {
-      return res.json({
-        response:
-          "😅 I only answer food, diet, calories & fitness-related questions."
-      });
-    }
-
-    // 🔥 Fetch or create session
     let session = await ChatSession.findOne({ userId });
-
     if (!session) {
-      session = await ChatSession.create({ userId, messages: [] });
+      session = await ChatSession.create({ userId, messages: [], summary: "" });
     }
 
-    // 🔥 Build context
-    const recentMessages = session.messages
-      .slice(-RECENT_MESSAGE_LIMIT)
-      .map(m => ({ role: m.role, content: m.content }));
-
-    const aiMessages = [
+    // 🔥 Build AI context (ORDER MATTERS)
+    const messages = [
       {
         role: "system",
-        content:
-          "You are a diet and fitness assistant. Answer ONLY food, calories, nutrition, and fitness topics."
+        content: `
+You are a STRICT diet & fitness assistant.
+
+Rules:
+- Answer ONLY food, calories, diet, nutrition, fitness.
+- If question is unrelated, politely refuse.
+- Use previous context if available.
+        `.trim()
       }
     ];
 
     if (session.summary) {
-      aiMessages.push({
+      messages.push({
         role: "system",
-        content: `Conversation summary so far: ${session.summary}.`
+        content: `Conversation summary: ${session.summary}`
       });
     }
 
-    aiMessages.push(...recentMessages);
-    aiMessages.push({ role: "user", content: prompt });
+    session.messages
+      .slice(-RECENT_MESSAGE_LIMIT)
+      .forEach(m => messages.push({ role: m.role, content: m.content }));
 
-    // 🔥 Call AI
-    const aiResponse = await client.responses.create({
+    messages.push({ role: "user", content: prompt });
+
+    // 🔥 CALL CORRECT API
+    const completion = await client.chat.completions.create({
       model: "openai/gpt-oss-20b",
-      input: aiMessages,
+      messages,
     });
 
-    const answer = aiResponse.output_text;
+    const answer = completion.choices[0].message.content;
 
-    // 🔥 Save messages
+    // 🔥 SAVE FULL CHAT
     session.messages.push(
       { role: "user", content: prompt },
       { role: "assistant", content: answer }
     );
-
     session.updatedAt = new Date();
 
-    // 🔥 Update summary occasionally
-    if (session.messages.length % SUMMARY_TRIGGER_COUNT === 0) {
-      const summaryResponse = await client.responses.create({
+    // 🔥 UPDATE SUMMARY AFTER EVERY 10 MESSAGES (NOT MODULO)
+    if (session.messages.length >= SUMMARY_TRIGGER_COUNT * 2) {
+      const lastChunk = session.messages
+        .slice(-SUMMARY_TRIGGER_COUNT * 2)
+        .map(m => `${m.role}: ${m.content}`)
+        .join("\n");
+
+      const summaryCompletion = await client.chat.completions.create({
         model: "openai/gpt-oss-20b",
-        input: [
+        messages: [
           {
             role: "system",
             content:
-              "Summarize the following conversation briefly. Keep important user preferences, goals, and facts only."
+              "Summarize briefly. Keep food habits, goals, and preferences only."
           },
-          {
-            role: "user",
-            content: session.messages
-              .slice(-SUMMARY_TRIGGER_COUNT * 2)
-              .map(m => `${m.role}: ${m.content}`)
-              .join("\n")
-          }
+          { role: "user", content: lastChunk }
         ]
       });
 
-      session.summary = summaryResponse.output_text;
+      session.summary = summaryCompletion.choices[0].message.content;
     }
 
     await session.save();
@@ -333,10 +258,9 @@ router.post("/talkToAI", async (req, res) => {
   } catch (err) {
     console.error("AI ERROR:", err);
     return res.status(500).json({
-      response: "⚠️ AI service error. Try again later."
+      response: "⚠️ AI service error"
     });
   }
 });
 
 module.exports = router;
-
