@@ -1,19 +1,16 @@
 require("dotenv").config();
-console.log(
-  "GROQ_API_KEY:",
-  process.env.GROQ_API_KEY ? "Loaded ✅" : "❌ Missing"
-);
+console.log("GROQ_API_KEY:", process.env.GROQ_API_KEY ? "Loaded ✅" : "❌ Missing");
 
 const express = require("express");
 const cors = require("cors");
 const connectDB = require("./src/config/db");
 
 const profileRoutes = require("./src/routes/profile");
-// const foodRoutes = require("./src/routes/food");
+const foodRoutes = require("./src/routes/food");
 const aiRoutes = require("./src/routes/ai.js");
 const waterRoutes = require("./src/routes/water");
 const reportRoutes = require("./src/routes/report");
-const foodRoutes = require("./src/routes/food");
+const fcm = require("./src/routes/fcm");
 
 const app = express();
 app.use(express.json());
@@ -30,11 +27,11 @@ app.get("/", (req, res) => {
 
 // main routers
 app.use("/api", profileRoutes);
-// app.use("/api", foodRoutes);
+app.use("/api", foodRoutes);
 app.use("/api", aiRoutes);
 app.use("/api", waterRoutes);
 app.use("/api", reportRoutes);
-app.use("/api", foodRoutes);
+app.use("/api",fcm);
 
 // start server
 const PORT = process.env.PORT || 5000;
