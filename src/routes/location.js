@@ -6,30 +6,36 @@ const UserLocation = require("../models/UserLocation");
 
 /**
  * POST /api/location
- * Create or update user location
+ * Handles null location safely
  */
 router.post("/location", async (req, res) => {
   try {
     const { userId, location, latitude, longitude } = req.body;
 
-    if (!userId || !location) {
+    if (!userId) {
       return res.status(400).json({
-        error: "userId and location are required",
+        error: "userId is required",
       });
     }
 
+    // Explicit null handling (permission denied case)
+    const payload = {
+      location: location ?? null,
+      latitude: latitude ?? null,
+      longitude: longitude ?? null,
+    };
+
     const updated = await UserLocation.findOneAndUpdate(
       { userId },
-      {
-        location,
-        latitude: latitude ?? null,
-        longitude: longitude ?? null,
-      },
+      payload,
       { upsert: true, new: true }
     );
 
     return res.json({
-      message: "Location saved successfully",
+      message:
+        location === null
+          ? "Location permission denied, saved as null"
+          : "Location saved successfully",
       data: updated,
     });
   } catch (err) {
@@ -40,7 +46,6 @@ router.post("/location", async (req, res) => {
 
 /**
  * GET /api/location/:userId
- * Fetch user location
  */
 router.get("/location/:userId", async (req, res) => {
   try {
@@ -49,9 +54,11 @@ router.get("/location/:userId", async (req, res) => {
     });
 
     if (!data) {
-      return res.status(404).json({
-        message: "Location not found",
+      return res.json({
+        userId: req.params.userId,
         location: null,
+        latitude: null,
+        longitude: null,
       });
     }
 
