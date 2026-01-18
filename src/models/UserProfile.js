@@ -13,6 +13,7 @@ const UserProfileSchema = new mongoose.Schema(
     weightUnit: String,
     heightUnit: String,
     targetWeight: Number,
+    showRegistered: String,
     
 
     goal: {
