@@ -52,6 +52,20 @@ const getAICalculatedTargets = async (profileData) => {
   }
 };
 
+// 🔹 Helper: Check if all profile fields are complete (no null/undefined)
+const areAllFieldsComplete = (data) => {
+  const requiredFields = [
+    'userId', 'name', 'mobileNumber', 'age', 'gender', 
+    'weight', 'height', 'weightUnit', 'heightUnit', 
+    'targetWeight', 'goal', 'physicalActivity'
+  ];
+  
+  return requiredFields.every(field => {
+    const value = data[field];
+    return value !== null && value !== undefined && value !== '';
+  });
+};
+
 // 🧩 POST /createProfile
 router.post("/createProfile", async (req, res) => {
   try {
@@ -63,12 +77,16 @@ router.post("/createProfile", async (req, res) => {
     // Get AI-calculated target values
     const targets = await getAICalculatedTargets(data);
 
+    // Check if all fields are complete and set showRegistered accordingly
+    const allFieldsComplete = areAllFieldsComplete(data);
+
     const updatedData = {
       ...data,
       targetCalorie: targets.calories,
       targetProtein: targets.protein,
       targetFat: targets.fat,
       targetCarb: targets.carb,
+      showRegistered: allFieldsComplete ? false : true,
     };
 
     let profile;

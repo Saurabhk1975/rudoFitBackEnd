@@ -4,6 +4,7 @@ const OpenAI = require("openai");
 const router = express.Router();
 
 const FoodEntry = require("../models/FoodEntry");
+const UserProfile = require("../models/UserProfile");
 
 const upload = multer({ dest: "uploads/" });
 
@@ -181,13 +182,45 @@ router.get("/today/:userId", async (req, res) => {
     const today = toISODate(getISTDate());
     const { userId } = req.params;
 
+    // Fetch food entry for today
     const doc = await FoodEntry.findOne({ userId, date: today }).lean();
+
+    // Fetch user profile for goal and targets
+    let userProfile = await UserProfile.findOne({ userId });
+
+    // Check if showRegistered is true and validate profile completeness
+    if (userProfile && userProfile.showRegistered === true) {
+      const requiredFields = [
+        'userId', 'name', 'mobileNumber', 'age', 'gender', 
+        'weight', 'height', 'weightUnit', 'heightUnit', 
+        'targetWeight', 'goal', 'physicalActivity'
+      ];
+      
+      const allFieldsComplete = requiredFields.every(field => {
+        const value = userProfile[field];
+        return value !== null && value !== undefined && value !== '';
+      });
+
+      // If all fields are complete, update showRegistered to false
+      if (allFieldsComplete) {
+        userProfile.showRegistered = false;
+        await userProfile.save();
+      }
+    }
+
+    const profileData = {
+      goal: userProfile?.goal || null,
+      targetCalorie: userProfile?.targetCalorie || 0,
+      targetProtein: userProfile?.targetProtein || 0,
+      showRegistered: userProfile?.showRegistered ?? true,
+    };
 
     if (doc) {
       return res.json({
         date: today,
         totals: doc.totals,
         items: doc.foodItems || [],
+        ...profileData,
         message: "Food eaten today",
       });
     }
@@ -207,6 +240,7 @@ router.get("/today/:userId", async (req, res) => {
         avgCalories: 0,
       },
       items: [],
+      ...profileData,
       message: "No food eaten today",
     });
   } catch (err) {
