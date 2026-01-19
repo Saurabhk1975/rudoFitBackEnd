@@ -9,39 +9,53 @@ const client = new OpenAI({
   baseURL: "https://api.groq.com/openai/v1",
 });
 
-// IST helper
+// ---------------- IST DATE HELPERS ----------------
 const getISTDateString = (date = new Date()) => {
   const ist = new Date(date.getTime() + 5.5 * 60 * 60 * 1000);
   return `${ist.getDate()}/${ist.getMonth() + 1}/${ist.getFullYear()}`;
 };
 
+// -------------------------------------------------
 async function generateYesterdayMessage(userId) {
-  // 🔒 SAFETY: profile must exist
-  const profile = await UserProfile.findOne({ userId });
-  if (!profile) return;
+  console.log("🟡 generateYesterdayMessage started for:", userId);
 
+  // 1️⃣ PROFILE MUST EXIST
+  const profile = await UserProfile.findOne({ userId }).lean();
+  if (!profile) {
+    console.log("🔴 No profile found, aborting");
+    return;
+  }
+
+  // 2️⃣ YESTERDAY DATE
   const yesterday = new Date();
   yesterday.setDate(yesterday.getDate() - 1);
   const yesterdayStr = getISTDateString(yesterday);
 
-  // 🔒 Prevent duplicate generation
+  // 3️⃣ FIND OR CREATE MESSAGE DOC
   let msgDoc = await YesterdayMessage.findOne({ userId });
+
   if (!msgDoc) {
     msgDoc = await YesterdayMessage.create({
       userId,
       forDate: yesterdayStr,
       isPending: true,
+      message: null,
     });
+    console.log("🟡 YesterdayMessage document created");
   }
 
-  if (!msgDoc.isPending) return;
+  // 4️⃣ PREVENT DUPLICATE GENERATION
+  if (msgDoc.isPending === false) {
+    console.log("🟢 Message already generated, skipping");
+    return;
+  }
 
-  // 🔍 Fetch yesterday food data
-  const food = await FoodEntry.findOne({ userId });
+  // 5️⃣ FETCH YESTERDAY FOOD
+  const foodDoc = await FoodEntry.findOne({ userId }).lean();
   let yesterdayFoods = [];
 
-  if (food) {
-    food.nutritionByDate.forEach((y) => {
+  if (foodDoc?.nutritionByDate?.length) {
+    foodDoc.nutritionByDate.forEach((y) => {
       y.months.forEach((m) => {
         m.days.forEach((d) => {
           const dateStr = `${d.day}/${m.month}/${y.year}`;
@@ -53,7 +67,16 @@ async function generateYesterdayMessage(userId) {
     });
   }
 
-  // AI INPUT JSON
+  // 🔒 NO FOOD → NO AI CALL
+  if (!yesterdayFoods.length) {
+    console.log("🟡 No food logged yesterday, skipping AI");
+    msgDoc.isPending = false;
+    msgDoc.message = null;
+    await msgDoc.save();
+    return;
+  }
+
+  // 6️⃣ AI INPUT
   const aiInput = {
     user: {
       name: profile.name || "User",
@@ -74,26 +97,48 @@ async function generateYesterdayMessage(userId) {
   };
 
   const prompt = `
-You are a fitness coach.
-Generate ONE short friendly personalized message.
-Mention user's name.
-Analyse yesterday food.
+You are a friendly fitness coach.
+Generate ONE short personalized message.
+Use user's name.
+Analyse yesterday food briefly.
 Encourage improvement.
-Return ONLY text.`;
+Max 2–3 lines.
+Return ONLY plain text.
+`;
 
-  const aiResp = await client.responses.create({
-    model: "openai/gpt-oss-20b",
-    input: [
-      { role: "system", content: prompt },
-      { role: "user", content: JSON.stringify(aiInput) },
-    ],
-  });
+  // 7️⃣ CALL AI (SAFE PARSING)
+  let aiText = null;
 
-  msgDoc.message = aiResp.output_text || "";
-  msgDoc.isPending = false;
+  try {
+    const aiResp = await client.chat.completions.create({
+      model: "openai/gpt-oss-20b",
+      messages: [
+        { role: "system", content: prompt },
+        { role: "user", content: JSON.stringify(aiInput) },
+      ],
+    });
+
+    aiText = aiResp?.choices?.[0]?.message?.content?.trim();
+  } catch (err) {
+    console.error("❌ AI call failed:", err.message);
+  }
+
+  if (!aiText) {
+    console.log("🔴 AI returned empty message");
+    msgDoc.isPending = false;
+    msgDoc.message = null;
+    await msgDoc.save();
+    return;
+  }
+
+  // 8️⃣ SAVE MESSAGE
+  msgDoc.message = aiText;
   msgDoc.forDate = yesterdayStr;
+  msgDoc.isPending = false;
 
   await msgDoc.save();
+
+  console.log("🟢 Yesterday message saved successfully");
 }
 
 module.exports = { generateYesterdayMessage };
