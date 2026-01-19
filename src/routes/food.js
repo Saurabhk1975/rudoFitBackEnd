@@ -250,23 +250,24 @@ router.post("/addFood", upload.single("image"), async (req, res) => {
 // });
 
 
-// 🔴 CHANGE: service import
-
-// ===============================
-// TODAY API
-// ===============================
 router.get("/today/:userId", async (req, res) => {
   try {
-    const today = toISODate(getISTDate());
     const { userId } = req.params;
+    const today = toISODate(getISTDate());
 
-    // Fetch today food entry
+    // ================================
+    // 1️⃣ Fetch today food entry
+    // ================================
     const doc = await FoodEntry.findOne({ userId, date: today }).lean();
 
-    // Fetch user profile
+    // ================================
+    // 2️⃣ Fetch user profile
+    // ================================
     const userProfile = await UserProfile.findOne({ userId }).lean();
 
-    // showRegistered logic
+    // ================================
+    // 3️⃣ showRegistered logic (as-is)
+    // ================================
     if (userProfile && userProfile.showRegistered === true) {
       const requiredFields = [
         "userId",
@@ -303,6 +304,9 @@ router.get("/today/:userId", async (req, res) => {
       showRegistered: userProfile?.showRegistered ?? true,
     };
 
+    // ================================
+    // 4️⃣ Send response FIRST
+    // ================================
     const responsePayload = doc
       ? {
           date: today,
@@ -329,37 +333,26 @@ router.get("/today/:userId", async (req, res) => {
           message: "No food eaten today",
         };
 
-    // ✅ SEND RESPONSE FIRST
     res.json(responsePayload);
 
-    // ✅ BACKGROUND JOB (AFTER RESPONSE)
+    // =====================================================
+    // 5️⃣ BACKGROUND JOB (NO DB LOGIC HERE)
+    // =====================================================
     setImmediate(async () => {
       try {
-        if (!userProfile) return;
-
-        let yesterdayDoc = await YesterdayMessage.findOne({ userId });
-
-        if (!yesterdayDoc) {
-          yesterdayDoc = await YesterdayMessage.create({
-            userId,
-            isUpdated: true,
-          });
-        }
-
-        if (yesterdayDoc.isUpdated === false) return;
-
+        console.log("🟡 Triggering yesterday message for:", userId);
         await generateYesterdayMessage(userId);
+        console.log("🟢 Yesterday message job done:", userId);
       } catch (err) {
-        console.error("❌ Yesterday message background error:", err);
+        console.error("❌ Yesterday background error:", err.message);
       }
     });
+
   } catch (err) {
     console.error("Today API error:", err);
     res.status(500).json({ error: err.message });
   }
-}); // ✅ VERY IMPORTANT — ROUTE CLOSED
-
-
+});
 
 
 router.get("/weekly/:userId", async (req, res) => {
