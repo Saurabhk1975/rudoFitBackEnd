@@ -16,7 +16,7 @@ const waterRoutes = require("./src/routes/water");
 const reportRoutes = require("./src/routes/report");
 const fcmRoutes = require("./src/routes/fcm");
 const locationRoutes = require("./src/routes/location"); // ✅ ADD THIS
-const message = require("./src?routes/yesterdayMessage.services");
+const message = require("./src/routes/yesterdayMessage.js");
 
 const app = express();
 
