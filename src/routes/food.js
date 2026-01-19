@@ -5,7 +5,8 @@ const router = express.Router();
 
 const FoodEntry = require("../models/FoodEntry");
 const UserProfile = require("../models/UserProfile");
-
+const YesterdayMessage = require("../models/Yesterday_Message");
+const { generateYesterdayMessage } = require("../services/yesterdayMessage.js"); 
 const upload = multer({ dest: "uploads/" });
 
 function getISTDate() {
@@ -248,8 +249,7 @@ router.post("/addFood", upload.single("image"), async (req, res) => {
 //   }
 // });
 
-const YesterdayMessage = require("../models/Yesterday_Message");
-const { generateYesterdayMessage } = require("../services/yesterdayMessage.service"); 
+
 // 🔴 CHANGE: service import
 
 router.get("/today/:userId", async (req, res) => {
