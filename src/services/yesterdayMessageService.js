@@ -9,136 +9,84 @@ const client = new OpenAI({
   baseURL: "https://api.groq.com/openai/v1",
 });
 
-// ---------------- IST DATE HELPERS ----------------
-const getISTDateString = (date = new Date()) => {
-  const ist = new Date(date.getTime() + 5.5 * 60 * 60 * 1000);
-  return `${ist.getDate()}/${ist.getMonth() + 1}/${ist.getFullYear()}`;
-};
+// IST YYYY-MM-DD
+function getYesterdayISO() {
+  const d = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
+  d.setDate(d.getDate() - 1);
 
-// -------------------------------------------------
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+
+  return `${y}-${m}-${day}`;
+}
+
 async function generateYesterdayMessage(userId) {
-  console.log("🟡 generateYesterdayMessage started for:", userId);
+  try {
+    const profile = await UserProfile.findOne({ userId }).lean();
+    if (!profile) return;
 
-  // 1️⃣ PROFILE MUST EXIST
-  const profile = await UserProfile.findOne({ userId }).lean();
-  if (!profile) {
-    console.log("🔴 No profile found, aborting");
-    return;
-  }
+    const date = getYesterdayISO();
 
-  // 2️⃣ YESTERDAY DATE
-  const yesterday = new Date();
-  yesterday.setDate(yesterday.getDate() - 1);
-  const yesterdayStr = getISTDateString(yesterday);
+    // 🔒 ensure single doc per day
+    let msgDoc = await YesterdayMessage.findOne({ userId, date });
 
-  // 3️⃣ FIND OR CREATE MESSAGE DOC
-  let msgDoc = await YesterdayMessage.findOne({ userId });
-
-  if (!msgDoc) {
-    msgDoc = await YesterdayMessage.create({
-      userId,
-      forDate: yesterdayStr,
-      isPending: true,
-      message: null,
-    });
-    console.log("🟡 YesterdayMessage document created");
-  }
-
-  // 4️⃣ PREVENT DUPLICATE GENERATION
-  if (msgDoc.isPending === false) {
-    console.log("🟢 Message already generated, skipping");
-    return;
-  }
-
-  // 5️⃣ FETCH YESTERDAY FOOD
-  const foodDoc = await FoodEntry.findOne({ userId }).lean();
-  let yesterdayFoods = [];
-
-  if (foodDoc?.nutritionByDate?.length) {
-    foodDoc.nutritionByDate.forEach((y) => {
-      y.months.forEach((m) => {
-        m.days.forEach((d) => {
-          const dateStr = `${d.day}/${m.month}/${y.year}`;
-          if (dateStr === yesterdayStr) {
-            yesterdayFoods = d.foodItems || [];
-          }
-        });
+    if (!msgDoc) {
+      msgDoc = await YesterdayMessage.create({
+        userId,
+        date,           // ✅ FIX
+        isUpdated: true,
       });
-    });
-  }
+    }
 
-  // 🔒 NO FOOD → NO AI CALL
-  if (!yesterdayFoods.length) {
-    console.log("🟡 No food logged yesterday, skipping AI");
-    msgDoc.isPending = false;
-    msgDoc.message = null;
-    await msgDoc.save();
-    return;
-  }
+    if (msgDoc.isUpdated === false) return;
 
-  // 6️⃣ AI INPUT
-  const aiInput = {
-    user: {
-      name: profile.name || "User",
-      age: profile.age,
-      gender: profile.gender,
-      weight: profile.weight,
-      height: profile.height,
-      goal: profile.goal,
-      activity: profile.physicalActivity,
-      targets: {
-        calories: profile.targetCalorie,
-        protein: profile.targetProtein,
-        fat: profile.targetFat,
-        carb: profile.targetCarb,
+    // 🔍 Fetch yesterday food
+    const food = await FoodEntry.findOne({ userId, date }).lean();
+    const yesterdayFoods = food?.foodItems || [];
+
+    const aiInput = {
+      user: {
+        name: profile.name || "User",
+        age: profile.age,
+        gender: profile.gender,
+        weight: profile.weight,
+        height: profile.height,
+        goal: profile.goal,
+        activity: profile.physicalActivity,
+        targets: {
+          calories: profile.targetCalorie,
+          protein: profile.targetProtein,
+          fat: profile.targetFat,
+          carb: profile.targetCarb,
+        },
       },
-    },
-    yesterdayFood: yesterdayFoods,
-  };
+      yesterdayFood: yesterdayFoods,
+    };
 
-  const prompt = `
-You are a friendly fitness coach.
-Generate ONE short personalized message.
-Use user's name.
-Analyse yesterday food briefly.
+    const prompt = `
+Generate ONE short friendly personalized message.
+Mention user's name.
+Analyse yesterday food.
 Encourage improvement.
-Max 2–3 lines.
 Return ONLY plain text.
 `;
 
-  // 7️⃣ CALL AI (SAFE PARSING)
-  let aiText = null;
-
-  try {
-    const aiResp = await client.chat.completions.create({
+    const aiResp = await client.responses.create({
       model: "openai/gpt-oss-20b",
-      messages: [
+      input: [
         { role: "system", content: prompt },
         { role: "user", content: JSON.stringify(aiInput) },
       ],
     });
 
-    aiText = aiResp?.choices?.[0]?.message?.content?.trim();
-  } catch (err) {
-    console.error("❌ AI call failed:", err.message);
-  }
+    msgDoc.message = aiResp.output_text || "";
+    msgDoc.isUpdated = false;
 
-  if (!aiText) {
-    console.log("🔴 AI returned empty message");
-    msgDoc.isPending = false;
-    msgDoc.message = null;
     await msgDoc.save();
-    return;
+  } catch (err) {
+    console.error("❌ generateYesterdayMessage failed:", err.message);
   }
-
-  // 8️⃣ SAVE MESSAGE
-  msgDoc.message = aiText;
-  msgDoc.forDate = yesterdayStr;
-  msgDoc.isPending = false;
-
-  await msgDoc.save();
-
-  console.log("🟢 Yesterday message saved successfully");
 }
 
 module.exports = { generateYesterdayMessage };
