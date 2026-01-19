@@ -177,34 +177,125 @@ router.post("/addFood", upload.single("image"), async (req, res) => {
 //   });
 // });
 
+// router.get("/today/:userId", async (req, res) => {
+//   try {
+//     const today = toISODate(getISTDate());
+//     const { userId } = req.params;
+
+//     // Fetch food entry for today
+//     const doc = await FoodEntry.findOne({ userId, date: today }).lean();
+
+//     // Fetch user profile for goal and targets
+//     let userProfile = await UserProfile.findOne({ userId });
+
+//     // Check if showRegistered is true and validate profile completeness
+//     if (userProfile && userProfile.showRegistered === true) {
+//       const requiredFields = [
+//         'userId', 'name', 'mobileNumber', 'age', 'gender', 
+//         'weight', 'height', 'weightUnit', 'heightUnit', 
+//         'targetWeight', 'goal', 'physicalActivity'
+//       ];
+      
+//       const allFieldsComplete = requiredFields.every(field => {
+//         const value = userProfile[field];
+//         return value !== null && value !== undefined && value !== '';
+//       });
+
+//       // If all fields are complete, update showRegistered to false
+//       if (allFieldsComplete) {
+//         userProfile.showRegistered = false;
+//         await userProfile.save();
+//       }
+//     }
+
+//     const profileData = {
+//       goal: userProfile?.goal || null,
+//       targetCalorie: userProfile?.targetCalorie || 0,
+//       targetProtein: userProfile?.targetProtein || 0,
+//       showRegistered: userProfile?.showRegistered ?? true,
+//     };
+
+//     if (doc) {
+//       return res.json({
+//         date: today,
+//         totals: doc.totals,
+//         items: doc.foodItems || [],
+//         ...profileData,
+//         message: "Food eaten today",
+//       });
+//     }
+
+//     // No entry today → return zero
+//     res.json({
+//       date: today,
+//       totals: {
+//         calories: 0,
+//         protein: 0,
+//         fat: 0,
+//         carbs: 0,
+//         sugar: 0,
+//         calcium: 0,
+//         goodCalories: 0,
+//         badCalories: 0,
+//         avgCalories: 0,
+//       },
+//       items: [],
+//       ...profileData,
+//       message: "No food eaten today",
+//     });
+//   } catch (err) {
+//     res.status(500).json({ error: err.message });
+//   }
+// });
+
+const YesterdayMessage = require("../models/Yesterday_Message");
+const { generateYesterdayMessage } = require("../services/yesterdayMessage.service"); 
+// 🔴 CHANGE: service import
+
 router.get("/today/:userId", async (req, res) => {
   try {
     const today = toISODate(getISTDate());
     const { userId } = req.params;
 
-    // Fetch food entry for today
+    // -------------------------------
+    // Fetch today food entry
+    // -------------------------------
     const doc = await FoodEntry.findOne({ userId, date: today }).lean();
 
-    // Fetch user profile for goal and targets
-    let userProfile = await UserProfile.findOne({ userId });
+    // -------------------------------
+    // Fetch user profile
+    // -------------------------------
+    const userProfile = await UserProfile.findOne({ userId }).lean();
 
-    // Check if showRegistered is true and validate profile completeness
+    // -------------------------------
+    // showRegistered logic (UNCHANGED)
+    // -------------------------------
     if (userProfile && userProfile.showRegistered === true) {
       const requiredFields = [
-        'userId', 'name', 'mobileNumber', 'age', 'gender', 
-        'weight', 'height', 'weightUnit', 'heightUnit', 
-        'targetWeight', 'goal', 'physicalActivity'
+        "userId",
+        "name",
+        "mobileNumber",
+        "age",
+        "gender",
+        "weight",
+        "height",
+        "weightUnit",
+        "heightUnit",
+        "targetWeight",
+        "goal",
+        "physicalActivity",
       ];
-      
-      const allFieldsComplete = requiredFields.every(field => {
+
+      const allFieldsComplete = requiredFields.every((field) => {
         const value = userProfile[field];
-        return value !== null && value !== undefined && value !== '';
+        return value !== null && value !== undefined && value !== "";
       });
 
-      // If all fields are complete, update showRegistered to false
       if (allFieldsComplete) {
-        userProfile.showRegistered = false;
-        await userProfile.save();
+        await UserProfile.updateOne(
+          { userId },
+          { $set: { showRegistered: false } }
+        );
       }
     }
 
@@ -215,132 +306,69 @@ router.get("/today/:userId", async (req, res) => {
       showRegistered: userProfile?.showRegistered ?? true,
     };
 
-    if (doc) {
-      return res.json({
-        date: today,
-        totals: doc.totals,
-        items: doc.foodItems || [],
-        ...profileData,
-        message: "Food eaten today",
-      });
-    }
+    // -------------------------------
+    // RESPONSE (SEND FIRST)
+    // -------------------------------
+    const responsePayload = doc
+      ? {
+          date: today,
+          totals: doc.totals,
+          items: doc.foodItems || [],
+          ...profileData,
+          message: "Food eaten today",
+        }
+      : {
+          date: today,
+          totals: {
+            calories: 0,
+            protein: 0,
+            fat: 0,
+            carbs: 0,
+            sugar: 0,
+            calcium: 0,
+            goodCalories: 0,
+            badCalories: 0,
+            avgCalories: 0,
+          },
+          items: [],
+          ...profileData,
+          message: "No food eaten today",
+        };
 
-    // No entry today → return zero
-    res.json({
-      date: today,
-      totals: {
-        calories: 0,
-        protein: 0,
-        fat: 0,
-        carbs: 0,
-        sugar: 0,
-        calcium: 0,
-        goodCalories: 0,
-        badCalories: 0,
-        avgCalories: 0,
-      },
-      items: [],
-      ...profileData,
-      message: "No food eaten today",
+    res.json(responsePayload);
+
+    // ==================================================
+    // 🔴 CHANGE: BACKGROUND YESTERDAY MESSAGE TRIGGER
+    // ==================================================
+    setImmediate(async () => {
+      try {
+        if (!userProfile) return;
+
+        let yesterdayDoc = await YesterdayMessage.findOne({ userId });
+
+        if (!yesterdayDoc) {
+          yesterdayDoc = await YesterdayMessage.create({
+            userId,
+            isUpdated: true,
+          });
+        }
+
+        if (yesterdayDoc.isUpdated === false) return;
+
+        // 🔴 CALL SERVICE (AI happens inside)
+        await generateYesterdayMessage(userId);
+      } catch (err) {
+        console.error("❌ Yesterday message background error:", err.message);
+      }
     });
+
   } catch (err) {
+    console.error("❌ /today error:", err);
     res.status(500).json({ error: err.message });
   }
 });
 
-//Weekly
-// router.get("/weekly/:userId", async (req, res) => {
-//   try {
-//     const data = await FoodEntry.find({ userId: req.params.userId })
-//       .sort({ createdAt: -1 })
-//       .limit(7)
-//       .select("date totals");
 
-//     res.json({
-//       count: data.length,
-//       days: data.reverse(),
-//     });
-//   } catch (err) {
-//     res.status(500).json({ error: err.message });
-//   }
-// });
-// Weekly (last 7 days, IST-safe, zero-filled)
-// router.get("/weekly/:userId", async (req, res) => {
-//   try {
-//     const { userId } = req.params;
-//     const today = getISTDate();
-
-//     // Build last 7 days (IST calendar days)
-//     const daysMeta = [];
-//     for (let i = 6; i >= 0; i--) {
-//       const d = new Date(today);
-//       d.setDate(today.getDate() - i);
-
-//       daysMeta.push({
-//         year: d.getFullYear(),
-//         month: d.getMonth() + 1,
-//         day: d.getDate(),
-//         iso: toISODate(d),
-//       });
-//     }
-
-//     // Fetch matching DB entries
-//     const docs = await FoodEntry.find({
-//       userId,
-//       $or: daysMeta.map(d => ({
-//         year: d.year,
-//         month: d.month,
-//         day: d.day,
-//       })),
-//     }).lean();
-
-//     // Map by Y-M-D key
-//     const map = {};
-//     docs.forEach(d => {
-//       map[`${d.year}-${d.month}-${d.day}`] = d;
-//     });
-
-//     // Build response
-//     const days = daysMeta.map(d => {
-//       const key = `${d.year}-${d.month}-${d.day}`;
-
-//       if (map[key]) {
-//         return {
-//           date: d.iso,
-//           totals: map[key].totals,
-//           items: map[key].foodItems || [],
-//           message: "Food eaten",
-//         };
-//       }
-
-//       return {
-//         date: d.iso,
-//         totals: {
-//           calories: 0,
-//           protein: 0,
-//           fat: 0,
-//           carbs: 0,
-//           sugar: 0,
-//           calcium: 0,
-//           goodCalories: 0,
-//           badCalories: 0,
-//           avgCalories: 0,
-//         },
-//         items: [],
-//         message: "No food eaten",
-//       };
-//     });
-
-//     res.json({
-//       range: "last_7_days",
-//       daysCount: days.length,
-//       days,
-//     });
-//   } catch (err) {
-//     console.error("Weekly error:", err);
-//     res.status(500).json({ error: err.message });
-//   }
-// });
 
 router.get("/weekly/:userId", async (req, res) => {
   try {
