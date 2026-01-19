@@ -16,6 +16,7 @@ const waterRoutes = require("./src/routes/water");
 const reportRoutes = require("./src/routes/report");
 const fcmRoutes = require("./src/routes/fcm");
 const locationRoutes = require("./src/routes/location"); // ✅ ADD THIS
+const message = required("./src?routes/yesterdayMessage.services");
 
 const app = express();
 
@@ -40,6 +41,7 @@ app.use("/api", waterRoutes);
 app.use("/api", reportRoutes);
 app.use("/api", fcmRoutes);
 app.use("/api", locationRoutes); // ✅ IMPORTANT
+app.use("/api",message);
 
 // START SERVER
 const PORT = process.env.PORT || 5000;
