@@ -252,24 +252,21 @@ router.post("/addFood", upload.single("image"), async (req, res) => {
 
 // 🔴 CHANGE: service import
 
+// ===============================
+// TODAY API
+// ===============================
 router.get("/today/:userId", async (req, res) => {
   try {
     const today = toISODate(getISTDate());
     const { userId } = req.params;
 
-    // -------------------------------
     // Fetch today food entry
-    // -------------------------------
     const doc = await FoodEntry.findOne({ userId, date: today }).lean();
 
-    // -------------------------------
     // Fetch user profile
-    // -------------------------------
     const userProfile = await UserProfile.findOne({ userId }).lean();
 
-    // -------------------------------
-    // showRegistered logic (UNCHANGED)
-    // -------------------------------
+    // showRegistered logic
     if (userProfile && userProfile.showRegistered === true) {
       const requiredFields = [
         "userId",
@@ -306,9 +303,6 @@ router.get("/today/:userId", async (req, res) => {
       showRegistered: userProfile?.showRegistered ?? true,
     };
 
-    // -------------------------------
-    // RESPONSE (SEND FIRST)
-    // -------------------------------
     const responsePayload = doc
       ? {
           date: today,
@@ -335,43 +329,35 @@ router.get("/today/:userId", async (req, res) => {
           message: "No food eaten today",
         };
 
+    // ✅ SEND RESPONSE FIRST
     res.json(responsePayload);
 
-    // ==================================================
-    // 🔴 CHANGE: BACKGROUND YESTERDAY MESSAGE TRIGGER
-    // ==================================================
-  setImmediate(async () => {
-  try {
-    console.log("🟡 Yesterday background job started for:", userId);
+    // ✅ BACKGROUND JOB (AFTER RESPONSE)
+    setImmediate(async () => {
+      try {
+        if (!userProfile) return;
 
-    if (!userProfile) {
-      console.log("🔴 No userProfile, skipping");
-      return;
-    }
+        let yesterdayDoc = await YesterdayMessage.findOne({ userId });
 
-    let yesterdayDoc = await YesterdayMessage.findOne({ userId });
+        if (!yesterdayDoc) {
+          yesterdayDoc = await YesterdayMessage.create({
+            userId,
+            isUpdated: true,
+          });
+        }
 
-    if (!yesterdayDoc) {
-      console.log("🟡 Creating YesterdayMessage doc");
-      yesterdayDoc = await YesterdayMessage.create({
-        userId,
-        isUpdated: true,
-      });
-    }
+        if (yesterdayDoc.isUpdated === false) return;
 
-    if (yesterdayDoc.isUpdated === false) {
-      console.log("🟢 Message already generated, skipping");
-      return;
-    }
-
-    console.log("🟡 Calling generateYesterdayMessage()");
-    await generateYesterdayMessage(userId);
-    console.log("🟢 generateYesterdayMessage finished");
-
+        await generateYesterdayMessage(userId);
+      } catch (err) {
+        console.error("❌ Yesterday message background error:", err);
+      }
+    });
   } catch (err) {
-    console.error("❌ Yesterday background error:", err);
+    console.error("Today API error:", err);
+    res.status(500).json({ error: err.message });
   }
-});
+}); // ✅ VERY IMPORTANT — ROUTE CLOSED
 
 
 
