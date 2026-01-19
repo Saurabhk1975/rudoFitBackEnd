@@ -99,5 +99,19 @@ No emojis. Max 4 lines.
     console.error("Yesterday AI error:", err.message);
   }
 }
+router.get("/yesterday-message/:userId", async (req, res) => {
+  const record = await YesterdayMessage.findOne({
+    userId: req.params.userId,
+  }).sort({ date: -1 });
+
+  if (!record) {
+    return res.json({ message: null });
+  }
+
+  res.json({
+    date: record.date,
+    message: record.message,
+  });
+});
 
 module.exports = { generateYesterdayMessage };
