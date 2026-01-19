@@ -340,33 +340,39 @@ router.get("/today/:userId", async (req, res) => {
     // ==================================================
     // 🔴 CHANGE: BACKGROUND YESTERDAY MESSAGE TRIGGER
     // ==================================================
-    setImmediate(async () => {
-      try {
-        if (!userProfile) return;
+  setImmediate(async () => {
+  try {
+    console.log("🟡 Yesterday background job started for:", userId);
 
-        let yesterdayDoc = await YesterdayMessage.findOne({ userId });
+    if (!userProfile) {
+      console.log("🔴 No userProfile, skipping");
+      return;
+    }
 
-        if (!yesterdayDoc) {
-          yesterdayDoc = await YesterdayMessage.create({
-            userId,
-            isUpdated: true,
-          });
-        }
+    let yesterdayDoc = await YesterdayMessage.findOne({ userId });
 
-        if (yesterdayDoc.isUpdated === false) return;
+    if (!yesterdayDoc) {
+      console.log("🟡 Creating YesterdayMessage doc");
+      yesterdayDoc = await YesterdayMessage.create({
+        userId,
+        isUpdated: true,
+      });
+    }
 
-        // 🔴 CALL SERVICE (AI happens inside)
-        await generateYesterdayMessage(userId);
-      } catch (err) {
-        console.error("❌ Yesterday message background error:", err.message);
-      }
-    });
+    if (yesterdayDoc.isUpdated === false) {
+      console.log("🟢 Message already generated, skipping");
+      return;
+    }
+
+    console.log("🟡 Calling generateYesterdayMessage()");
+    await generateYesterdayMessage(userId);
+    console.log("🟢 generateYesterdayMessage finished");
 
   } catch (err) {
-    console.error("❌ /today error:", err);
-    res.status(500).json({ error: err.message });
+    console.error("❌ Yesterday background error:", err);
   }
 });
+
 
 
 
