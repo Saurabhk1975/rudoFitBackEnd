@@ -30,7 +30,7 @@ const client = new OpenAI({
 
 async function askAIForNutrition(text) {
   const prompt = `
-Return ONLY JSON:
+Return ONLY JSON and quantity should me be minimum if not mentioned clearly, then take the smallest quantity and also try to match or take reference from USDA and open food facts:
 {"calories":number,"protein":number,"fat":number,"carbs":number,"sugar":number,"calcium":number}
 Food: ${text}
 `;
