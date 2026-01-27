@@ -891,6 +891,9 @@ const OpenAI = require("openai");
 const router = express.Router();
 
 const FoodEntry = require("../models/FoodEntry");
+const UserProfile = require("../models/UserProfile");
+const YesterdayMessage = require("../models/Yesterday_Message");
+const { generateYesterdayMessage } = require("../services/yesterdayMessageService.js"); 
 
 // ===============================
 // MULTER CONFIG
