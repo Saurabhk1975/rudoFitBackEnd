@@ -1107,7 +1107,23 @@ router.post("/addFood", upload.single("image"), async (req, res) => {
       { upsert: true }
     );
 
-    res.json({ message: "Food added successfully", date });
+   res.json({
+  message: "Food added successfully",
+  date,
+  addedFood: updatedDoc?.foodItems?.[0] || null,
+  totals: updatedDoc?.totals || {
+    calories: 0,
+    protein: 0,
+    fat: 0,
+    carbs: 0,
+    sugar: 0,
+    calcium: 0,
+    goodCalories: 0,
+    badCalories: 0,
+    avgCalories: 0,
+  },
+});
+
 
   } catch (err) {
     if (file && fs.existsSync(file.path)) fs.unlinkSync(file.path);
@@ -1115,5 +1131,481 @@ router.post("/addFood", upload.single("image"), async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+
+
+
+
+
+
+
+router.get("/weekly/:userId", async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const today = getISTDate();
+
+    // Build last 7 days
+    const daysMeta = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(today);
+      d.setDate(today.getDate() - i);
+
+      daysMeta.push({
+        year: d.getFullYear(),
+        month: d.getMonth() + 1,
+        day: d.getDate(),
+        iso: toISODate(d),
+      });
+    }
+
+    const docs = await FoodEntry.find({
+      userId,
+      $or: daysMeta.map(d => ({
+        year: d.year,
+        month: d.month,
+        day: d.day,
+      })),
+    }).lean();
+
+    const map = {};
+    docs.forEach(d => {
+      map[`${d.year}-${d.month}-${d.day}`] = d;
+    });
+
+    const totals_range = {
+      calories: 0,
+      protein: 0,
+      fat: 0,
+      carbs: 0,
+      sugar: 0,
+      calcium: 0,
+      goodCalories: 0,
+      badCalories: 0,
+    };
+
+    let loggedDays = 0;
+
+    const days = daysMeta.map(d => {
+      const key = `${d.year}-${d.month}-${d.day}`;
+
+      if (map[key]) {
+        const t = map[key].totals || {};
+        loggedDays++;
+
+        totals_range.calories += t.calories || 0;
+        totals_range.protein += t.protein || 0;
+        totals_range.fat += t.fat || 0;
+        totals_range.carbs += t.carbs || 0;
+        totals_range.sugar += t.sugar || 0;
+        totals_range.calcium += t.calcium || 0;
+        totals_range.goodCalories += t.goodCalories || 0;
+        totals_range.badCalories += t.badCalories || 0;
+
+        return {
+          date: d.iso,
+          totals: t,
+          items: map[key].foodItems || [],
+          message: "Food eaten",
+        };
+      }
+
+      return {
+        date: d.iso,
+        totals: {
+          calories: 0,
+          protein: 0,
+          fat: 0,
+          carbs: 0,
+          sugar: 0,
+          calcium: 0,
+          goodCalories: 0,
+          badCalories: 0,
+        },
+        items: [],
+        message: "No food eaten",
+      };
+    });
+
+    const totalDays = days.length;
+    const missedDays = totalDays - loggedDays;
+
+    // ✅ NEW: averages object
+    const averages = {
+      calories: loggedDays ? Math.round(totals_range.calories / loggedDays) : 0,
+      protein: loggedDays ? +(totals_range.protein / loggedDays).toFixed(1) : 0,
+      fat: loggedDays ? +(totals_range.fat / loggedDays).toFixed(1) : 0,
+      carbs: loggedDays ? +(totals_range.carbs / loggedDays).toFixed(1) : 0,
+      sugar: loggedDays ? +(totals_range.sugar / loggedDays).toFixed(1) : 0,
+      calcium: loggedDays ? +(totals_range.calcium / loggedDays).toFixed(1) : 0,
+      goodCalories: loggedDays
+        ? Math.round(totals_range.goodCalories / loggedDays)
+        : 0,
+      badCalories: loggedDays
+        ? Math.round(totals_range.badCalories / loggedDays)
+        : 0,
+    };
+
+    res.json({
+      range: "last_7_days",
+      totalDays,
+      loggedDays,
+      missedDays,
+      totals_range,
+      averages, // 👈 THIS IS WHAT YOU WANTED
+      days,
+    });
+  } catch (err) {
+    console.error("Weekly error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
+ 
+
+
+// Monthly
+// router.get("/monthly/:userId", async (req, res) => {
+//   try {
+//     const { userId } = req.params;
+//     const now = getISTDate();
+
+//     const start = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2,"0")}-01`;
+//     const end = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2,"0")}-31`;
+
+//     const data = await FoodEntry.find({
+//       userId,
+//       date: { $gte: start, $lte: end },
+//     }).sort({ date: 1 });
+
+//     res.json({
+//       count: data.length,
+//       days: data,
+//     });
+//   } catch (err) {
+//     res.status(500).json({ error: err.message });
+//   }
+// });
+// Monthly (year + month aware, zero-filled, IST-safe)
+// router.get("/monthly/:userId/:year/:month", async (req, res) => {
+//   try {
+//     const { userId, year, month } = req.params;
+
+//     const y = Number(year);
+//     const m = Number(month); // 1–12
+
+//     if (m < 1 || m > 12) {
+//       return res.status(400).json({ error: "Invalid month" });
+//     }
+
+//     const todayIST = getISTDate();
+//     const isCurrentMonth =
+//       y === todayIST.getFullYear() && m === todayIST.getMonth() + 1;
+
+//     const lastDayOfMonth = new Date(y, m, 0).getDate();
+//     const endDay = isCurrentMonth ? todayIST.getDate() : lastDayOfMonth;
+
+//     // Fetch existing data
+//     const docs = await FoodEntry.find({
+//       userId,
+//       year: y,
+//       month: m,
+//     }).lean();
+
+//     // Build map by DAY (not date string)
+//     const map = {};
+//     docs.forEach(d => {
+//       map[d.day] = d;
+//     });
+
+//     const days = [];
+
+//     for (let day = 1; day <= endDay; day++) {
+//       if (map[day]) {
+//         days.push({
+//           date: `${y}-${String(m).padStart(2, "0")}-${String(day).padStart(2, "0")}`,
+//           totals: map[day].totals,
+//           items: map[day].foodItems || [],
+//           message: "Food eaten",
+//         });
+//       } else {
+//         days.push({
+//           date: `${y}-${String(m).padStart(2, "0")}-${String(day).padStart(2, "0")}`,
+//           totals: {
+//             calories: 0,
+//             protein: 0,
+//             fat: 0,
+//             carbs: 0,
+//             sugar: 0,
+//             calcium: 0,
+//             goodCalories: 0,
+//             badCalories: 0,
+//             avgCalories: 0,
+//           },
+//           items: [],
+//           message: "No food eaten",
+//         });
+//       }
+//     }
+
+//     res.json({
+//       year: y,
+//       month: m,
+//       daysCount: days.length,
+//       days,
+//     });
+//   } catch (err) {
+//     console.error("Monthly error:", err);
+//     res.status(500).json({ error: err.message });
+//   }
+// });
+router.get("/monthly/:userId/:year/:month", async (req, res) => {
+  try {
+    const { userId, year, month } = req.params;
+
+    const y = Number(year);
+    const m = Number(month);
+
+    if (m < 1 || m > 12) {
+      return res.status(400).json({ error: "Invalid month" });
+    }
+
+    const todayIST = getISTDate();
+    const isCurrentMonth =
+      y === todayIST.getFullYear() && m === todayIST.getMonth() + 1;
+
+    const lastDayOfMonth = new Date(y, m, 0).getDate();
+    const endDay = isCurrentMonth ? todayIST.getDate() : lastDayOfMonth;
+
+    const docs = await FoodEntry.find({
+      userId,
+      year: y,
+      month: m,
+    }).lean();
+
+    const map = {};
+    docs.forEach(d => {
+      map[d.day] = d;
+    });
+
+    const totals_range = {
+      calories: 0,
+      protein: 0,
+      fat: 0,
+      carbs: 0,
+      sugar: 0,
+      calcium: 0,
+      goodCalories: 0,
+      badCalories: 0,
+    };
+
+    let loggedDays = 0;
+    const days = [];
+
+    for (let day = 1; day <= endDay; day++) {
+      const date = `${y}-${String(m).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+
+      if (map[day]) {
+        const t = map[day].totals || {};
+        loggedDays++;
+
+        totals_range.calories += t.calories || 0;
+        totals_range.protein += t.protein || 0;
+        totals_range.fat += t.fat || 0;
+        totals_range.carbs += t.carbs || 0;
+        totals_range.sugar += t.sugar || 0;
+        totals_range.calcium += t.calcium || 0;
+        totals_range.goodCalories += t.goodCalories || 0;
+        totals_range.badCalories += t.badCalories || 0;
+
+        days.push({
+          date,
+          totals: t,
+          items: map[day].foodItems || [],
+          message: "Food eaten",
+        });
+      } else {
+        days.push({
+          date,
+          totals: {
+            calories: 0,
+            protein: 0,
+            fat: 0,
+            carbs: 0,
+            sugar: 0,
+            calcium: 0,
+            goodCalories: 0,
+            badCalories: 0,
+          },
+          items: [],
+          message: "No food eaten",
+        });
+      }
+    }
+
+    const totalDays = days.length;
+    const missedDays = totalDays - loggedDays;
+
+    // ✅ NEW: averages for monthly
+    const averages = {
+      calories: loggedDays ? Math.round(totals_range.calories / loggedDays) : 0,
+      protein: loggedDays ? +(totals_range.protein / loggedDays).toFixed(1) : 0,
+      fat: loggedDays ? +(totals_range.fat / loggedDays).toFixed(1) : 0,
+      carbs: loggedDays ? +(totals_range.carbs / loggedDays).toFixed(1) : 0,
+      sugar: loggedDays ? +(totals_range.sugar / loggedDays).toFixed(1) : 0,
+      calcium: loggedDays ? +(totals_range.calcium / loggedDays).toFixed(1) : 0,
+      goodCalories: loggedDays
+        ? Math.round(totals_range.goodCalories / loggedDays)
+        : 0,
+      badCalories: loggedDays
+        ? Math.round(totals_range.badCalories / loggedDays)
+        : 0,
+    };
+
+    res.json({
+      year: y,
+      month: m,
+      totalDays,
+      loggedDays,
+      missedDays,
+      totals_range,
+      averages, // 👈 same as weekly
+      days,
+    });
+  } catch (err) {
+    console.error("Monthly error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
+
+router.post("/range", async (req, res) => {
+  try {
+    const { userId, startDate, endDate } = req.body;
+    if (!userId || !startDate || !endDate) {
+      return res.status(400).json({ error: "userId, startDate, endDate required" });
+    }
+
+    // 1️⃣ Fetch existing data
+    const docs = await FoodEntry.find({
+      userId,
+      date: { $gte: startDate, $lte: endDate },
+    }).lean();
+
+    // 2️⃣ Build map: date -> doc
+    const map = {};
+    docs.forEach(d => {
+      map[d.date] = d;
+    });
+
+    // 3️⃣ Generate full date range
+    const results = [];
+    let cursor = new Date(startDate);
+    const end = new Date(endDate);
+
+    while (cursor <= end) {
+      const y = cursor.getFullYear();
+      const m = String(cursor.getMonth() + 1).padStart(2, "0");
+      const d = String(cursor.getDate()).padStart(2, "0");
+      const iso = `${y}-${m}-${d}`;
+
+      if (map[iso]) {
+        // existing day
+        results.push({
+          date: iso,
+          totals: map[iso].totals,
+          items: map[iso].foodItems || [],
+          message: "Food eaten",
+        });
+      } else {
+        // missing day → zero
+        results.push({
+          date: iso,
+          totals: {
+            calories: 0,
+            protein: 0,
+            fat: 0,
+            carbs: 0,
+            sugar: 0,
+            calcium: 0,
+            goodCalories: 0,
+            badCalories: 0,
+            avgCalories: 0,
+          },
+          items: [],
+          message: "No food eaten",
+        });
+      }
+
+      cursor.setDate(cursor.getDate() + 1);
+    }
+
+    res.json({
+      userId,
+      from: startDate,
+      to: endDate,
+      daysCount: results.length,
+      days: results,
+    });
+
+  } catch (err) {
+    console.error("Range error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get("/recent/:userId", async (req, res) => {
+  const items = await FoodEntry.aggregate([
+    { $match: { userId: req.params.userId } },
+    { $unwind: "$foodItems" },
+    { $sort: { "foodItems.createdAt": -1 } },
+    { $limit: 10 },
+    { $replaceRoot: { newRoot: "$foodItems" } },
+  ]);
+
+  res.json({ recent: items });
+});
+
+// Yearly
+router.get("/yearly/:userId/:year", async (req, res) => {
+  try {
+    const { userId, year } = req.params;
+
+    const data = await FoodEntry.aggregate([
+      {
+        $match: {
+          userId,
+          year: Number(year),
+        },
+      },
+      {
+        $group: {
+          _id: "$month",
+          calories: { $sum: "$totals.calories" },
+          protein: { $sum: "$totals.protein" },
+          fat: { $sum: "$totals.fat" },
+          carbs: { $sum: "$totals.carbs" },
+        },
+      },
+      { $sort: { _id: 1 } },
+    ]);
+
+    res.json({
+      year: Number(year),
+      months: data.map((m) => ({
+        month: m._id,
+        calories: m.calories,
+        protein: m.protein,
+        fat: m.fat,
+        carbs: m.carbs,
+      })),
+    });
+  } catch (err) {
+    console.error("Yearly error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 
 module.exports = router;
