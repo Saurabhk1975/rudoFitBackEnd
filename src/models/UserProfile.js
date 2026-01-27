@@ -15,6 +15,7 @@ const UserProfileSchema = new mongoose.Schema(
     targetWeight: Number,
     showRegistered: Boolean,
     
+    
 
     goal: {
       type: String,
@@ -30,6 +31,8 @@ const UserProfileSchema = new mongoose.Schema(
     targetProtein: { type: Number, default: 0 },
     targetFat: { type: Number, default: 0 },
     targetCarb: { type: Number, default: 0 },
+    caloriesSurplus: {type: Number, default: 0 },
+    caloriesDeficit: {type: Number, default: 0 },
 
     // ✅ SIMPLE MULTI-DEVICE SUPPORT
     fcmTokens: {
