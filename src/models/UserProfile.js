@@ -33,6 +33,8 @@ const UserProfileSchema = new mongoose.Schema(
     targetCarb: { type: Number, default: 0 },
     caloriesSurplus: {type: Number, default: 0 },
     caloriesDeficit: {type: Number, default: 0 },
+    proteinSurplus: {type: Number, default: 0 },
+    proteinDeficit: {type: Number, default: 0 },
 
     // ✅ SIMPLE MULTI-DEVICE SUPPORT
     fcmTokens: {
