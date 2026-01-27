@@ -884,7 +884,6 @@
 
 
 // module.exports = router;
-
 const express = require("express");
 const multer = require("multer");
 const fs = require("fs");
@@ -892,15 +891,14 @@ const OpenAI = require("openai");
 const router = express.Router();
 
 const FoodEntry = require("../models/FoodEntry");
-const UserProfile = require("../models/UserProfile");
 const { generateYesterdayMessage } = require("../services/yesterdayMessageService");
 
 // ===============================
-// CONFIG
+// MULTER CONFIG
 // ===============================
 const upload = multer({
   dest: "uploads/",
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB max
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
 });
 
 // ===============================
@@ -909,11 +907,9 @@ const upload = multer({
 function getISTDate() {
   return new Date(Date.now() + 5.5 * 60 * 60 * 1000);
 }
-
-function toISODate(date) {
-  return date.toISOString().split("T")[0];
+function toISODate(d) {
+  return d.toISOString().split("T")[0];
 }
-
 const clean = (v) => (isNaN(Number(v)) ? 0 : Number(v));
 
 // ===============================
@@ -933,7 +929,7 @@ const imageClient = new OpenAI({
 // ===============================
 function safeJSON(text) {
   try {
-    const match = text.match(/\{[\s\S]*\}/);
+    const match = text?.match(/\{[\s\S]*\}/);
     return match ? JSON.parse(match[0]) : null;
   } catch {
     return null;
@@ -941,7 +937,7 @@ function safeJSON(text) {
 }
 
 // ===============================
-// AI HELPERS
+// TEXT AI
 // ===============================
 async function askAIForNutrition(text) {
   const prompt = `
@@ -949,12 +945,10 @@ Return ONLY JSON:
 {"calories":number,"protein":number,"fat":number,"carbs":number,"sugar":number,"calcium":number}
 Food: ${text}
 `;
-
   const r = await groqClient.chat.completions.create({
     model: "openai/gpt-oss-20b",
     messages: [{ role: "user", content: prompt }],
   });
-
   return safeJSON(r.choices?.[0]?.message?.content);
 }
 
@@ -964,20 +958,23 @@ Return ONLY JSON:
 {"label":"Food name","healthTag":"good_to_have|bad_to_have|average"}
 Food: ${text}
 `;
-
   const r = await groqClient.chat.completions.create({
     model: "openai/gpt-oss-20b",
     messages: [{ role: "user", content: prompt }],
   });
-
   return safeJSON(r.choices?.[0]?.message?.content);
 }
 
+// ===============================
+// IMAGE AI — ✅ FIXED
+// ===============================
 async function askAIForImageNutrition(imagePath) {
-  const imageBase64 = fs.readFileSync(imagePath, "base64");
+  const buffer = fs.readFileSync(imagePath);
+  const base64 = buffer.toString("base64");
+  const dataUrl = `data:image/jpeg;base64,${base64}`;
 
   const prompt = `
-Identify food from image.
+Identify food from the image.
 Assume MINIMUM quantity.
 Use USDA/OpenFoodFacts.
 Return ONLY JSON:
@@ -996,41 +993,41 @@ Return ONLY JSON:
 
   const r = await imageClient.responses.create({
     model: "gpt-5-nano",
-    input: [{
-      role: "user",
-      content: [
-        { type: "input_text", text: prompt },
-        { type: "input_image", image_base64: imageBase64 }
-      ],
-    }],
+    input: [
+      {
+        role: "user",
+        content: [
+          { type: "input_text", text: prompt },
+          {
+            type: "input_image",
+            image_url: dataUrl, // ✅ ONLY THIS WORKS
+          },
+        ],
+      },
+    ],
   });
 
   return safeJSON(r.output_text);
 }
 
 // ===============================
-// ADD FOOD
+// ADD FOOD API
 // ===============================
 router.post("/addFood", upload.single("image"), async (req, res) => {
   const { userId, foodData, customText } = req.body;
   const file = req.file;
 
   try {
-    if (!userId) return res.status(400).json({ error: "userId required" });
+    if (!userId) throw new Error("userId required");
 
-    // ---- enforce ONE input type ----
+    // enforce ONE input
     const inputs = [foodData, customText, file].filter(Boolean);
-    if (inputs.length !== 1) {
-      if (file) fs.unlinkSync(file.path);
-      return res.status(400).json({ error: "Send only ONE of foodData, customText or image" });
-    }
+    if (inputs.length !== 1) throw new Error("Send only ONE input");
 
     let nutrition, label, name, sourceType;
 
-    // ---------- JSON ----------
     if (foodData) {
       const data = typeof foodData === "string" ? JSON.parse(foodData) : foodData;
-
       nutrition = {
         calories: clean(data.calories),
         protein: clean(data.protein),
@@ -1039,72 +1036,41 @@ router.post("/addFood", upload.single("image"), async (req, res) => {
         sugar: clean(data.sugar),
         calcium: clean(data.calcium),
       };
-
       name = data.name || "Custom Food";
       label = { label: name, healthTag: data.healthTag || "average" };
       sourceType = "json";
     }
 
-    // ---------- TEXT ----------
     else if (customText) {
       nutrition = await askAIForNutrition(customText);
       label = await askAIForLabel(customText);
-
-      if (!nutrition || !label) {
-        throw new Error("AI failed to analyze text");
-      }
-
+      if (!nutrition || !label) throw new Error("AI text failed");
       name = label.label;
       sourceType = "text";
     }
 
-    // ---------- IMAGE ----------
     else if (file) {
-      const imgResult = await askAIForImageNutrition(file.path);
-
-      if (!imgResult) throw new Error("AI failed to analyze image");
+      const img = await askAIForImageNutrition(file.path);
+      if (!img) throw new Error("AI image failed");
 
       nutrition = {
-        calories: clean(imgResult.calories),
-        protein: clean(imgResult.protein),
-        fat: clean(imgResult.fat),
-        carbs: clean(imgResult.carbs),
-        sugar: clean(imgResult.sugar),
-        calcium: clean(imgResult.calcium),
+        calories: clean(img.calories),
+        protein: clean(img.protein),
+        fat: clean(img.fat),
+        carbs: clean(img.carbs),
+        sugar: clean(img.sugar),
+        calcium: clean(img.calcium),
       };
-
-      name = imgResult.name || "Image Food";
-      label = { label: name, healthTag: imgResult.healthTag || "average" };
+      name = img.name || "Image Food";
+      label = { label: name, healthTag: img.healthTag || "average" };
       sourceType = "image";
     }
 
-    // ---------- CLEANUP IMAGE ----------
-    if (file) fs.unlinkSync(file.path);
+    // 🔥 ALWAYS CLEAN DISK
+    if (file && fs.existsSync(file.path)) fs.unlinkSync(file.path);
 
     const now = getISTDate();
     const date = toISODate(now);
-
-    const foodItem = {
-      name,
-      label: label.label,
-      healthTag: label.healthTag,
-      ...nutrition,
-      imageUrl: null,
-      sourceType,
-      createdAt: now,
-    };
-
-    const inc = {
-      calories: nutrition.calories,
-      protein: nutrition.protein,
-      fat: nutrition.fat,
-      carbs: nutrition.carbs,
-      sugar: nutrition.sugar,
-      calcium: nutrition.calcium,
-      goodCalories: label.healthTag === "good_to_have" ? nutrition.calories : 0,
-      badCalories: label.healthTag === "bad_to_have" ? nutrition.calories : 0,
-      avgCalories: label.healthTag === "average" ? nutrition.calories : 0,
-    };
 
     await FoodEntry.updateOne(
       { userId, date },
@@ -1117,17 +1083,26 @@ router.post("/addFood", upload.single("image"), async (req, res) => {
           day: now.getDate(),
         },
         $inc: {
-          "totals.calories": inc.calories,
-          "totals.protein": inc.protein,
-          "totals.fat": inc.fat,
-          "totals.carbs": inc.carbs,
-          "totals.sugar": inc.sugar,
-          "totals.calcium": inc.calcium,
-          "totals.goodCalories": inc.goodCalories,
-          "totals.badCalories": inc.badCalories,
-          "totals.avgCalories": inc.avgCalories,
+          "totals.calories": nutrition.calories,
+          "totals.protein": nutrition.protein,
+          "totals.fat": nutrition.fat,
+          "totals.carbs": nutrition.carbs,
+          "totals.sugar": nutrition.sugar,
+          "totals.calcium": nutrition.calcium,
+          "totals.goodCalories": label.healthTag === "good_to_have" ? nutrition.calories : 0,
+          "totals.badCalories": label.healthTag === "bad_to_have" ? nutrition.calories : 0,
+          "totals.avgCalories": label.healthTag === "average" ? nutrition.calories : 0,
         },
-        $push: { foodItems: foodItem },
+        $push: {
+          foodItems: {
+            name,
+            label: label.label,
+            healthTag: label.healthTag,
+            ...nutrition,
+            sourceType,
+            createdAt: now,
+          },
+        },
       },
       { upsert: true }
     );
@@ -1142,4 +1117,3 @@ router.post("/addFood", upload.single("image"), async (req, res) => {
 });
 
 module.exports = router;
-
