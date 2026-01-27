@@ -891,18 +891,17 @@ const OpenAI = require("openai");
 const router = express.Router();
 
 const FoodEntry = require("../models/FoodEntry");
-const { generateYesterdayMessage } = require("../services/yesterdayMessageService");
 
 // ===============================
 // MULTER CONFIG
 // ===============================
 const upload = multer({
   dest: "uploads/",
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB max
 });
 
 // ===============================
-// DATE HELPERS
+// DATE HELPERS (IST SAFE)
 // ===============================
 function getISTDate() {
   return new Date(Date.now() + 5.5 * 60 * 60 * 1000);
@@ -937,7 +936,7 @@ function safeJSON(text) {
 }
 
 // ===============================
-// TEXT AI
+// TEXT → NUTRITION
 // ===============================
 async function askAIForNutrition(text) {
   const prompt = `
@@ -966,7 +965,7 @@ Food: ${text}
 }
 
 // ===============================
-// IMAGE AI — ✅ FIXED
+// IMAGE → FOOD (FIXED FORMAT)
 // ===============================
 async function askAIForImageNutrition(imagePath) {
   const buffer = fs.readFileSync(imagePath);
@@ -978,7 +977,6 @@ Identify food from the image.
 Assume MINIMUM quantity.
 Use USDA/OpenFoodFacts.
 Return ONLY JSON:
-
 {
   "name":"Food name",
   "healthTag":"good_to_have|bad_to_have|average",
@@ -998,10 +996,7 @@ Return ONLY JSON:
         role: "user",
         content: [
           { type: "input_text", text: prompt },
-          {
-            type: "input_image",
-            image_url: dataUrl, // ✅ ONLY THIS WORKS
-          },
+          { type: "input_image", image_url: dataUrl },
         ],
       },
     ],
@@ -1020,12 +1015,15 @@ router.post("/addFood", upload.single("image"), async (req, res) => {
   try {
     if (!userId) throw new Error("userId required");
 
-    // enforce ONE input
+    // Enforce exactly ONE input
     const inputs = [foodData, customText, file].filter(Boolean);
-    if (inputs.length !== 1) throw new Error("Send only ONE input");
+    if (inputs.length !== 1) {
+      throw new Error("Send exactly ONE of foodData, customText, or image");
+    }
 
     let nutrition, label, name, sourceType;
 
+    // ---------- JSON ----------
     if (foodData) {
       const data = typeof foodData === "string" ? JSON.parse(foodData) : foodData;
       nutrition = {
@@ -1041,17 +1039,19 @@ router.post("/addFood", upload.single("image"), async (req, res) => {
       sourceType = "json";
     }
 
+    // ---------- TEXT ----------
     else if (customText) {
       nutrition = await askAIForNutrition(customText);
       label = await askAIForLabel(customText);
-      if (!nutrition || !label) throw new Error("AI text failed");
+      if (!nutrition || !label) throw new Error("AI text analysis failed");
       name = label.label;
       sourceType = "text";
     }
 
+    // ---------- IMAGE ----------
     else if (file) {
       const img = await askAIForImageNutrition(file.path);
-      if (!img) throw new Error("AI image failed");
+      if (!img) throw new Error("AI image analysis failed");
 
       nutrition = {
         calories: clean(img.calories),
@@ -1072,6 +1072,7 @@ router.post("/addFood", upload.single("image"), async (req, res) => {
     const now = getISTDate();
     const date = toISODate(now);
 
+    // ---------- UPSERT ----------
     await FoodEntry.updateOne(
       { userId, date },
       {
@@ -1107,23 +1108,20 @@ router.post("/addFood", upload.single("image"), async (req, res) => {
       { upsert: true }
     );
 
-   res.json({
-  message: "Food added successfully",
-  date,
-  addedFood: updatedDoc?.foodItems?.[0] || null,
-  totals: updatedDoc?.totals || {
-    calories: 0,
-    protein: 0,
-    fat: 0,
-    carbs: 0,
-    sugar: 0,
-    calcium: 0,
-    goodCalories: 0,
-    badCalories: 0,
-    avgCalories: 0,
-  },
-});
+    // ===============================
+    // 🔑 FETCH UPDATED DATA (FIX)
+    // ===============================
+    const updatedDoc = await FoodEntry.findOne(
+      { userId, date },
+      { totals: 1, foodItems: { $slice: -1 } }
+    ).lean();
 
+    res.json({
+      message: "Food added successfully",
+      date,
+      addedFood: updatedDoc?.foodItems?.[0] || null,
+      totals: updatedDoc?.totals || {},
+    });
 
   } catch (err) {
     if (file && fs.existsSync(file.path)) fs.unlinkSync(file.path);
@@ -1131,6 +1129,8 @@ router.post("/addFood", upload.single("image"), async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+
 
 
 
