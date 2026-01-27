@@ -973,9 +973,10 @@ async function askAIForImageNutrition(imagePath) {
   const dataUrl = `data:image/jpeg;base64,${base64}`;
 
   const prompt = `
-Identify food from the image.
+Identify the food from the image.
 Assume MINIMUM quantity.
 Use USDA/OpenFoodFacts.
+Use as much minimum data you can use because you are giving too much caloories and protien so less is fine but max is not
 Return ONLY JSON:
 {
   "name":"Food name",
