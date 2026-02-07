@@ -4,6 +4,8 @@ const express = require("express");
 const router = express.Router();
 const UserProfile = require("../models/UserProfile");
 const OpenAI = require("openai");
+const DeleteAccountRequest = require("../models/DeleteAccountRequest");
+const Feedback = require("../models/Feedback");
 
 // 🧠 Setup Groq AI client
 const client = new OpenAI({
@@ -240,6 +242,73 @@ router.put("/editProfile/:userId", async (req, res) => {
     res.json({ message: "✅ Profile updated successfully", updated });
   } catch (err) {
     console.error("❌ Edit Profile Error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
+router.post("/deleteAccount", async (req, res) => {
+  try {
+    const { userId, reason } = req.body;
+
+    if (!userId) {
+      return res.status(400).json({ error: "userId required" });
+    }
+
+    // prevent duplicate requests
+    const existing = await DeleteAccountRequest.findOne({
+      userId,
+      status: "pending",
+    });
+
+    if (existing) {
+      return res.json({
+        message: "Delete account request already submitted",
+      });
+    }
+
+    const request = new DeleteAccountRequest({
+      userId,
+      reason: reason || "",
+    });
+
+    await request.save();
+
+    res.json({
+      message: "Delete account request submitted successfully",
+    });
+  } catch (err) {
+    console.error("❌ Delete Account Error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
+router.post("/feedback", async (req, res) => {
+  try {
+    const { userId, name, email, mobileNumber, message } = req.body;
+
+    if (!userId || !name || !email || !mobileNumber || !message) {
+      return res.status(400).json({
+        error: "userId, name, email, mobileNumber, message are required",
+      });
+    }
+
+    const feedback = new Feedback({
+      userId,
+      name,
+      email,
+      mobileNumber,
+      message,
+    });
+
+    await feedback.save();
+
+    res.json({
+      message: "Feedback submitted successfully",
+    });
+  } catch (err) {
+    console.error("❌ Feedback Error:", err);
     res.status(500).json({ error: err.message });
   }
 });
