@@ -76,7 +76,7 @@ const getAICalculatedTargets = async (profileData) => {
         {
           role: "system",
           content:
-            "You are a nutrition and fitness assistant. Respond only with valid JSON containing keys: calories, protein, fat, carb. Do not include any text outside JSON.",
+            "You are a nutrition and fitness assistant. Respond only with valid JSON containing keys: calories, protein, fat, carb. Do not include any text outside JSON. and alway assume minimu portion and try to be efficient and alway think and try to be 99.9% accurate and if you are not sure about portion take lowest as lowest as you can assume like standard quantity and then respond and also take take reference of WHO or US food database",
         },
         { role: "user", content: userPrompt },
       ],
@@ -157,7 +157,7 @@ router.post("/createProfile", async (req, res) => {
       proteinSurplus: surplusDeficit.proteinSurplus,
       proteinDeficit: surplusDeficit.proteinDeficit,
 
-      showRegistered: allFieldsComplete ? false : true,
+      showRegistered: allFieldsComplete ? true : false,
     };
 
     let profile;
