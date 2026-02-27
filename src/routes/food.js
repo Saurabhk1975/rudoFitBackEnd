@@ -258,6 +258,112 @@ router.post("/addFood", upload.single("image"), async (req, res) => {
 
 
 
+// router.get("/today/:userId", async (req, res) => {
+//   try {
+//     const today = toISODate(getISTDate());
+//     const { userId } = req.params;
+
+//     // -------------------------------
+//     // Fetch today's food entry
+//     // -------------------------------
+//     const doc = await FoodEntry.findOne({ userId, date: today }).lean();
+
+//     // -------------------------------
+//     // Fetch user profile
+//     // -------------------------------
+//     let userProfile = await UserProfile.findOne({ userId }).lean();
+
+//     // -------------------------------
+//     // showRegistered logic (UNCHANGED)
+//     // -------------------------------
+//     if (userProfile && userProfile.showRegistered === true) {
+//       const requiredFields = [
+//         "userId",
+//         "name",
+//         "mobileNumber",
+//         "age",
+//         "gender",
+//         "weight",
+//         "height",
+//         "weightUnit",
+//         "heightUnit",
+//         "targetWeight",
+//         "goal",
+//         "physicalActivity",
+//       ];
+
+//       const allFieldsComplete = requiredFields.every((field) => {
+//         const value = userProfile[field];
+//         return value !== null && value !== undefined && value !== "";
+//       });
+
+//       if (allFieldsComplete) {
+//         await UserProfile.updateOne(
+//           { userId },
+//           { $set: { showRegistered: false } }
+//         );
+//       }
+//     }
+
+//     // -------------------------------
+//     // Profile-related data to send
+//     // -------------------------------
+//     const profileData = {
+//       goal: userProfile?.goal || null,
+//       name: userProfile?.name || null,
+
+//       targetCalorie: userProfile?.targetCalorie || 0,
+//       targetProtein: userProfile?.targetProtein || 0,
+
+//       // ✅ ADDED: Surplus / Deficit fields
+//       caloriesSurplus: userProfile?.caloriesSurplus || 0,
+//       caloriesDeficit: userProfile?.caloriesDeficit || 0,
+//       proteinSurplus: userProfile?.proteinSurplus || 0,
+//       proteinDeficit: userProfile?.proteinDeficit || 0,
+
+//       showRegistered: userProfile?.showRegistered ?? true,
+//     };
+
+//     // -------------------------------
+//     // If food exists today
+//     // -------------------------------
+//     if (doc) {
+//       return res.json({
+//         date: today,
+//         totals: doc.totals,
+//         items: doc.foodItems || [],
+//         ...profileData,
+//         message: "Food eaten today",
+//       });
+//     }
+
+//     // -------------------------------
+//     // No food today → zero response
+//     // -------------------------------
+//     res.json({
+//       date: today,
+//       totals: {
+//         calories: 0,
+//         protein: 0,
+//         fat: 0,
+//         carbs: 0,
+//         sugar: 0,
+//         calcium: 0,
+//         goodCalories: 0,
+//         badCalories: 0,
+//         avgCalories: 0,
+//       },
+//       items: [],
+//       ...profileData,
+//       message: "No food eaten today",
+//     });
+
+//   } catch (err) {
+//     console.error("❌ Today API Error:", err);
+//     res.status(500).json({ error: err.message });
+//   }
+// });
+
 router.get("/today/:userId", async (req, res) => {
   try {
     const today = toISODate(getISTDate());
@@ -309,13 +415,16 @@ router.get("/today/:userId", async (req, res) => {
     // Profile-related data to send
     // -------------------------------
     const profileData = {
-      goal: userProfile?.goal || null,
       name: userProfile?.name || null,
+      goal: userProfile?.goal || null,
 
+      // ✅ All Target Fields
       targetCalorie: userProfile?.targetCalorie || 0,
       targetProtein: userProfile?.targetProtein || 0,
+      targetFat: userProfile?.targetFat || 0,
+      targetCarb: userProfile?.targetCarb || 0,
 
-      // ✅ ADDED: Surplus / Deficit fields
+      // ✅ Surplus / Deficit
       caloriesSurplus: userProfile?.caloriesSurplus || 0,
       caloriesDeficit: userProfile?.caloriesDeficit || 0,
       proteinSurplus: userProfile?.proteinSurplus || 0,
@@ -363,8 +472,6 @@ router.get("/today/:userId", async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
-
-
 router.get("/weekly/:userId", async (req, res) => {
   try {
     const { userId } = req.params;
