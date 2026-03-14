@@ -168,7 +168,7 @@ const client = new OpenAI({
 // ❌ keywords sirf HARD BLOCK ke liye, memory ke liye nahi
 const foodKeywords = [
   "food","diet","nutrition","protein","carbs","fat","meal",
-  "fitness","workout","calorie","weight","muscle"
+  "fitness","workout","calorie","weight","muscle","sleep","gym","sleep"
 ];
 
 const RECENT_MESSAGE_LIMIT = 6;
@@ -194,9 +194,10 @@ router.post("/talkToAI", async (req, res) => {
 You are a STRICT diet & fitness assistant.
 
 Rules:
-- Answer ONLY food, calories, diet, nutrition, fitness.
-- If question is unrelated, politely refuse.
+- Answer ONLY food, calories, diet, nutrition, and fitness.
+- If the question is unrelated, politely refuse.
 - Use previous context if available.
+- Always answer very simply and in bullet points, like a heading bullet point, and again a heading or subheading, and a bullet point or numbering like this only
         `.trim()
       }
     ];
