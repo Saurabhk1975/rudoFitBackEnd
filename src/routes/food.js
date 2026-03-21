@@ -200,26 +200,30 @@ router.post("/addFood", upload.single("image"), async (req, res) => {
     //   label = { label: name, healthTag: img.healthTag || "average" };
     //   sourceType = "image";
     // }
-    else {
+   else {
   const img = await askAIForImageNutrition(file.path);
-
   if (!img) throw new Error("AI image failed");
 
-  // 🔴 DETECT BAD AI RESPONSE
+  // 🧠 NORMALIZE NAME
+  const nameFromAI = (img.name || "").toLowerCase().trim();
+
+  // 🔥 STRICT REJECTION CONDITIONS
   const isUnidentified =
-    !img.name ||
-    img.name.toLowerCase().includes("not sure") ||
-    img.name.toLowerCase().includes("unknown") ||
-    img.name === "Image Food";
+    !nameFromAI ||
+    nameFromAI.includes("unidentified") ||
+    nameFromAI.includes("not sure") ||
+    nameFromAI.includes("unknown") ||
+    nameFromAI === "image food";
 
   if (isUnidentified) {
-    // 🧹 clean file
+    // 🧹 delete file
     if (file && fs.existsSync(file.path)) fs.unlinkSync(file.path);
 
     return res.status(200).json({
       success: false,
+      type: "UNIDENTIFIED_FOOD",
       message:
-        "😵‍💫 Our AI tried to eat your food but got confused.\n\n📸 Give a clearer image so AI can eat properly and tell you calories 😆",
+        "😂 AI ne try kiya khane ka but samajh hi nahi aaya kya hai.\n\n📸 Clear image de bhai, warna AI diet pe chala jayega 😭",
     });
   }
 
