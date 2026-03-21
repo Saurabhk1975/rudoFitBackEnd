@@ -96,7 +96,7 @@ You are a professional nutrition expert.
 
 STRICT RULES:
 - Identify food ONLY if confidence >= 90%
-- If unsure → DO NOT GUESS → return "Uncertain food"
+- If unsure → DO NOT GUESS → return "Unidentified food"
 - NEVER hallucinate
 - ALWAYS assume MINIMUM quantity
 - NEVER overestimate calories or protein
@@ -304,6 +304,51 @@ router.delete("/deleteFood", async (req, res) => {
   }
 });
 
+
+
+//====================
+  // GetHome page data
+//====================
+router.get("/today/:userId", async (req, res) => {
+  try {
+    const today = toISODate(getISTDate());
+    const { userId } = req.params;
+
+    const doc = await FoodEntry.findOne({ userId, date: today }).lean();
+    const userProfile = await UserProfile.findOne({ userId }).lean();
+
+    const profileData = {
+      name: userProfile?.name || null,
+      goal: userProfile?.goal || null,
+      targetCalorie: userProfile?.targetCalorie || 0,
+      targetProtein: userProfile?.targetProtein || 0,
+      targetFat: userProfile?.targetFat || 0,
+      targetCarb: userProfile?.targetCarb || 0,
+    };
+
+    if (doc) {
+      return res.json({
+        date: today,
+        totals: doc.totals,
+        items: (doc.foodItems || []).map(i => ({
+          _id: i._id,
+          ...i,
+        })),
+        ...profileData,
+      });
+    }
+
+    res.json({
+      date: today,
+      totals: {},
+      items: [],
+      ...profileData,
+    });
+
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 module.exports = router;
 
 
