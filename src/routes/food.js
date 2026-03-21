@@ -183,23 +183,59 @@ router.post("/addFood", upload.single("image"), async (req, res) => {
     }
 
     // ---------- IMAGE ----------
+    // else {
+    //   const img = await askAIForImageNutrition(file.path);
+    //   if (!img) throw new Error("AI image failed");
+
+    //   nutrition = {
+    //     calories: clean(img.calories),
+    //     protein: clean(img.protein),
+    //     fat: clean(img.fat),
+    //     carbs: clean(img.carbs),
+    //     sugar: clean(img.sugar),
+    //     calcium: clean(img.calcium),
+    //   };
+
+    //   name = img.name || "Image Food";
+    //   label = { label: name, healthTag: img.healthTag || "average" };
+    //   sourceType = "image";
+    // }
     else {
-      const img = await askAIForImageNutrition(file.path);
-      if (!img) throw new Error("AI image failed");
+  const img = await askAIForImageNutrition(file.path);
 
-      nutrition = {
-        calories: clean(img.calories),
-        protein: clean(img.protein),
-        fat: clean(img.fat),
-        carbs: clean(img.carbs),
-        sugar: clean(img.sugar),
-        calcium: clean(img.calcium),
-      };
+  if (!img) throw new Error("AI image failed");
 
-      name = img.name || "Image Food";
-      label = { label: name, healthTag: img.healthTag || "average" };
-      sourceType = "image";
-    }
+  // 🔴 DETECT BAD AI RESPONSE
+  const isUnidentified =
+    !img.name ||
+    img.name.toLowerCase().includes("not sure") ||
+    img.name.toLowerCase().includes("unknown") ||
+    img.name === "Image Food";
+
+  if (isUnidentified) {
+    // 🧹 clean file
+    if (file && fs.existsSync(file.path)) fs.unlinkSync(file.path);
+
+    return res.status(200).json({
+      success: false,
+      message:
+        "😵‍💫 Our AI tried to eat your food but got confused.\n\n📸 Give a clearer image so AI can eat properly and tell you calories 😆",
+    });
+  }
+
+  nutrition = {
+    calories: clean(img.calories),
+    protein: clean(img.protein),
+    fat: clean(img.fat),
+    carbs: clean(img.carbs),
+    sugar: clean(img.sugar),
+    calcium: clean(img.calcium),
+  };
+
+  name = img.name;
+  label = { label: name, healthTag: img.healthTag || "average" };
+  sourceType = "image";
+}
 
     // 🔥 HARD LIMIT (ANTI AI BULLSHIT)
     if (nutrition.calories > 1500) nutrition.calories = 500;
