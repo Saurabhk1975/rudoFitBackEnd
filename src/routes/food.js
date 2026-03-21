@@ -1,6 +1,3 @@
-
-
-// module.exports = router;
 const express = require("express");
 const multer = require("multer");
 const fs = require("fs");
@@ -9,19 +6,17 @@ const router = express.Router();
 
 const FoodEntry = require("../models/FoodEntry");
 const UserProfile = require("../models/UserProfile");
-const YesterdayMessage = require("../models/Yesterday_Message");
-const { generateYesterdayMessage } = require("../services/yesterdayMessageService.js"); 
 
 // ===============================
-// MULTER CONFIG
+// MULTER
 // ===============================
 const upload = multer({
   dest: "uploads/",
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB max
+  limits: { fileSize: 5 * 1024 * 1024 },
 });
 
 // ===============================
-// DATE HELPERS (IST SAFE)
+// DATE HELPERS
 // ===============================
 function getISTDate() {
   return new Date(Date.now() + 5.5 * 60 * 60 * 1000);
@@ -44,7 +39,7 @@ const imageClient = new OpenAI({
 });
 
 // ===============================
-// SAFE JSON PARSER
+// SAFE JSON
 // ===============================
 function safeJSON(text) {
   try {
@@ -56,7 +51,7 @@ function safeJSON(text) {
 }
 
 // ===============================
-// TEXT → NUTRITION
+// TEXT AI
 // ===============================
 async function askAIForNutrition(text) {
   const prompt = `
@@ -64,10 +59,12 @@ Return ONLY JSON:
 {"calories":number,"protein":number,"fat":number,"carbs":number,"sugar":number,"calcium":number}
 Food: ${text}
 `;
+
   const r = await groqClient.chat.completions.create({
     model: "openai/gpt-oss-20b",
     messages: [{ role: "user", content: prompt }],
   });
+
   return safeJSON(r.choices?.[0]?.message?.content);
 }
 
@@ -77,15 +74,17 @@ Return ONLY JSON:
 {"label":"Food name","healthTag":"good_to_have|bad_to_have|average"}
 Food: ${text}
 `;
+
   const r = await groqClient.chat.completions.create({
     model: "openai/gpt-oss-20b",
     messages: [{ role: "user", content: prompt }],
   });
+
   return safeJSON(r.choices?.[0]?.message?.content);
 }
 
 // ===============================
-// IMAGE → FOOD (FIXED FORMAT)
+// IMAGE AI (OPTIMIZED PROMPT)
 // ===============================
 async function askAIForImageNutrition(imagePath) {
   const buffer = fs.readFileSync(imagePath);
@@ -93,11 +92,20 @@ async function askAIForImageNutrition(imagePath) {
   const dataUrl = `data:image/jpeg;base64,${base64}`;
 
   const prompt = `
-Identify the food from the image.
-Assume MINIMUM quantity.
-Use USDA/OpenFoodFacts.
-Use as much minimum data you can use because you are giving too much caloories and protien so less is fine but max is not
-Return ONLY JSON:
+You are a professional nutrition expert.
+
+STRICT RULES:
+- Identify food ONLY if confidence >= 90%
+- If unsure → DO NOT GUESS → return "Uncertain food"
+- NEVER hallucinate
+- ALWAYS assume MINIMUM quantity
+- NEVER overestimate calories or protein
+- Prefer UNDER-estimation
+- Use USDA / OpenFoodFacts reference
+
+OUTPUT:
+Return ONLY JSON
+
 {
   "name":"Food name",
   "healthTag":"good_to_have|bad_to_have|average",
@@ -108,6 +116,10 @@ Return ONLY JSON:
   "sugar":number,
   "calcium":number
 }
+
+RULE:
+- junk → bad_to_have
+- healthy → good_to_have
 `;
 
   const r = await imageClient.responses.create({
@@ -127,7 +139,7 @@ Return ONLY JSON:
 }
 
 // ===============================
-// ADD FOOD API
+// ADD FOOD
 // ===============================
 router.post("/addFood", upload.single("image"), async (req, res) => {
   const { userId, foodData, customText } = req.body;
@@ -136,17 +148,15 @@ router.post("/addFood", upload.single("image"), async (req, res) => {
   try {
     if (!userId) throw new Error("userId required");
 
-    // Enforce exactly ONE input
     const inputs = [foodData, customText, file].filter(Boolean);
-    if (inputs.length !== 1) {
-      throw new Error("Send exactly ONE of foodData, customText, or image");
-    }
+    if (inputs.length !== 1) throw new Error("Send exactly ONE input");
 
     let nutrition, label, name, sourceType;
 
     // ---------- JSON ----------
     if (foodData) {
       const data = typeof foodData === "string" ? JSON.parse(foodData) : foodData;
+
       nutrition = {
         calories: clean(data.calories),
         protein: clean(data.protein),
@@ -155,6 +165,7 @@ router.post("/addFood", upload.single("image"), async (req, res) => {
         sugar: clean(data.sugar),
         calcium: clean(data.calcium),
       };
+
       name = data.name || "Custom Food";
       label = { label: name, healthTag: data.healthTag || "average" };
       sourceType = "json";
@@ -164,15 +175,17 @@ router.post("/addFood", upload.single("image"), async (req, res) => {
     else if (customText) {
       nutrition = await askAIForNutrition(customText);
       label = await askAIForLabel(customText);
-      if (!nutrition || !label) throw new Error("AI text analysis failed");
+
+      if (!nutrition || !label) throw new Error("AI text failed");
+
       name = label.label;
       sourceType = "text";
     }
 
     // ---------- IMAGE ----------
-    else if (file) {
+    else {
       const img = await askAIForImageNutrition(file.path);
-      if (!img) throw new Error("AI image analysis failed");
+      if (!img) throw new Error("AI image failed");
 
       nutrition = {
         calories: clean(img.calories),
@@ -182,18 +195,22 @@ router.post("/addFood", upload.single("image"), async (req, res) => {
         sugar: clean(img.sugar),
         calcium: clean(img.calcium),
       };
+
       name = img.name || "Image Food";
       label = { label: name, healthTag: img.healthTag || "average" };
       sourceType = "image";
     }
 
-    // 🔥 ALWAYS CLEAN DISK
+    // 🔥 HARD LIMIT (ANTI AI BULLSHIT)
+    if (nutrition.calories > 1500) nutrition.calories = 500;
+    if (nutrition.protein > 100) nutrition.protein = 30;
+
+    // 🔥 CLEAN FILE
     if (file && fs.existsSync(file.path)) fs.unlinkSync(file.path);
 
     const now = getISTDate();
     const date = toISODate(now);
 
-    // ---------- UPSERT ----------
     await FoodEntry.updateOne(
       { userId, date },
       {
@@ -209,11 +226,6 @@ router.post("/addFood", upload.single("image"), async (req, res) => {
           "totals.protein": nutrition.protein,
           "totals.fat": nutrition.fat,
           "totals.carbs": nutrition.carbs,
-          "totals.sugar": nutrition.sugar,
-          "totals.calcium": nutrition.calcium,
-          "totals.goodCalories": label.healthTag === "good_to_have" ? nutrition.calories : 0,
-          "totals.badCalories": label.healthTag === "bad_to_have" ? nutrition.calories : 0,
-          "totals.avgCalories": label.healthTag === "average" ? nutrition.calories : 0,
         },
         $push: {
           foodItems: {
@@ -229,34 +241,438 @@ router.post("/addFood", upload.single("image"), async (req, res) => {
       { upsert: true }
     );
 
-    // ===============================
-    // 🔑 FETCH UPDATED DATA (FIX)
-    // ===============================
     const updatedDoc = await FoodEntry.findOne(
       { userId, date },
       { totals: 1, foodItems: { $slice: -1 } }
     ).lean();
 
+    const addedFood = updatedDoc?.foodItems?.[0];
+
     res.json({
       message: "Food added successfully",
       date,
-      addedFood: updatedDoc?.foodItems?.[0] || null,
+      addedFood: addedFood ? { _id: addedFood._id, ...addedFood } : null,
       totals: updatedDoc?.totals || {},
     });
 
   } catch (err) {
     if (file && fs.existsSync(file.path)) fs.unlinkSync(file.path);
-    console.error(err);
     res.status(500).json({ error: err.message });
   }
 });
 
+// ===============================
+// DELETE FOOD
+// ===============================
+router.delete("/deleteFood", async (req, res) => {
+  try {
+    const { userId, foodId } = req.body;
+    const today = toISODate(getISTDate());
+
+    const doc = await FoodEntry.findOne(
+      { userId, date: today, "foodItems._id": foodId },
+      { "foodItems.$": 1 }
+    );
+
+    if (!doc) return res.status(404).json({ error: "Food not found" });
+
+    const item = doc.foodItems[0];
+
+    await FoodEntry.updateOne(
+      { userId, date: today },
+      {
+        $pull: { foodItems: { _id: foodId } },
+        $inc: {
+          "totals.calories": -item.calories,
+          "totals.protein": -item.protein,
+          "totals.fat": -item.fat,
+          "totals.carbs": -item.carbs,
+        },
+      }
+    );
+
+    const updated = await FoodEntry.findOne({ userId, date: today });
+
+    res.json({
+      message: "Deleted successfully",
+      totals: updated.totals,
+      items: updated.foodItems,
+    });
+
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+module.exports = router;
+
+
+
+
+
+// // module.exports = router;
+// const express = require("express");
+// const multer = require("multer");
+// const fs = require("fs");
+// const OpenAI = require("openai");
+// const router = express.Router();
+
+// const FoodEntry = require("../models/FoodEntry");
+// const UserProfile = require("../models/UserProfile");
+// const YesterdayMessage = require("../models/Yesterday_Message");
+// const { generateYesterdayMessage } = require("../services/yesterdayMessageService.js"); 
+
+// // ===============================
+// // MULTER CONFIG
+// // ===============================
+// const upload = multer({
+//   dest: "uploads/",
+//   limits: { fileSize: 5 * 1024 * 1024 }, // 5MB max
+// });
+
+// // ===============================
+// // DATE HELPERS (IST SAFE)
+// // ===============================
+// function getISTDate() {
+//   return new Date(Date.now() + 5.5 * 60 * 60 * 1000);
+// }
+// function toISODate(d) {
+//   return d.toISOString().split("T")[0];
+// }
+// const clean = (v) => (isNaN(Number(v)) ? 0 : Number(v));
+
+// // ===============================
+// // AI CLIENTS
+// // ===============================
+// const groqClient = new OpenAI({
+//   apiKey: process.env.GROQ_API_KEY,
+//   baseURL: "https://api.groq.com/openai/v1",
+// });
+
+// const imageClient = new OpenAI({
+//   apiKey: process.env.OPENAI_API_KEY,
+// });
+
+// // ===============================
+// // SAFE JSON PARSER
+// // ===============================
+// function safeJSON(text) {
+//   try {
+//     const match = text?.match(/\{[\s\S]*\}/);
+//     return match ? JSON.parse(match[0]) : null;
+//   } catch {
+//     return null;
+//   }
+// }
+
+// // ===============================
+// // TEXT → NUTRITION
+// // ===============================
+// async function askAIForNutrition(text) {
+//   const prompt = `
+// Return ONLY JSON:
+// {"calories":number,"protein":number,"fat":number,"carbs":number,"sugar":number,"calcium":number}
+// Food: ${text}
+// `;
+//   const r = await groqClient.chat.completions.create({
+//     model: "openai/gpt-oss-20b",
+//     messages: [{ role: "user", content: prompt }],
+//   });
+//   return safeJSON(r.choices?.[0]?.message?.content);
+// }
+
+// async function askAIForLabel(text) {
+//   const prompt = `
+// Return ONLY JSON:
+// {"label":"Food name","healthTag":"good_to_have|bad_to_have|average"}
+// Food: ${text}
+// `;
+//   const r = await groqClient.chat.completions.create({
+//     model: "openai/gpt-oss-20b",
+//     messages: [{ role: "user", content: prompt }],
+//   });
+//   return safeJSON(r.choices?.[0]?.message?.content);
+// }
+
+// // ===============================
+// // IMAGE → FOOD (FIXED FORMAT)
+// // ===============================
+// async function askAIForImageNutrition(imagePath) {
+//   const buffer = fs.readFileSync(imagePath);
+//   const base64 = buffer.toString("base64");
+//   const dataUrl = `data:image/jpeg;base64,${base64}`;
+
+//   const prompt = `
+// Identify the food from the image.
+// Assume MINIMUM quantity.
+// Use USDA/OpenFoodFacts.
+// Use as much minimum data you can use because you are giving too much caloories and protien so less is fine but max is not
+// Return ONLY JSON:
+// {
+//   "name":"Food name",
+//   "healthTag":"good_to_have|bad_to_have|average",
+//   "calories":number,
+//   "protein":number,
+//   "fat":number,
+//   "carbs":number,
+//   "sugar":number,
+//   "calcium":number
+// }
+// `;
+
+//   const r = await imageClient.responses.create({
+//     model: "gpt-5-nano",
+//     input: [
+//       {
+//         role: "user",
+//         content: [
+//           { type: "input_text", text: prompt },
+//           { type: "input_image", image_url: dataUrl },
+//         ],
+//       },
+//     ],
+//   });
+
+//   return safeJSON(r.output_text);
+// }
+
+// // ===============================
+// // ADD FOOD API
+// // ===============================
+// router.post("/addFood", upload.single("image"), async (req, res) => {
+//   const { userId, foodData, customText } = req.body;
+//   const file = req.file;
+
+//   try {
+//     if (!userId) throw new Error("userId required");
+
+//     // Enforce exactly ONE input
+//     const inputs = [foodData, customText, file].filter(Boolean);
+//     if (inputs.length !== 1) {
+//       throw new Error("Send exactly ONE of foodData, customText, or image");
+//     }
+
+//     let nutrition, label, name, sourceType;
+
+//     // ---------- JSON ----------
+//     if (foodData) {
+//       const data = typeof foodData === "string" ? JSON.parse(foodData) : foodData;
+//       nutrition = {
+//         calories: clean(data.calories),
+//         protein: clean(data.protein),
+//         fat: clean(data.fat),
+//         carbs: clean(data.carbs),
+//         sugar: clean(data.sugar),
+//         calcium: clean(data.calcium),
+//       };
+//       name = data.name || "Custom Food";
+//       label = { label: name, healthTag: data.healthTag || "average" };
+//       sourceType = "json";
+//     }
+
+//     // ---------- TEXT ----------
+//     else if (customText) {
+//       nutrition = await askAIForNutrition(customText);
+//       label = await askAIForLabel(customText);
+//       if (!nutrition || !label) throw new Error("AI text analysis failed");
+//       name = label.label;
+//       sourceType = "text";
+//     }
+
+//     // ---------- IMAGE ----------
+//     else if (file) {
+//       const img = await askAIForImageNutrition(file.path);
+//       if (!img) throw new Error("AI image analysis failed");
+
+//       nutrition = {
+//         calories: clean(img.calories),
+//         protein: clean(img.protein),
+//         fat: clean(img.fat),
+//         carbs: clean(img.carbs),
+//         sugar: clean(img.sugar),
+//         calcium: clean(img.calcium),
+//       };
+//       name = img.name || "Image Food";
+//       label = { label: name, healthTag: img.healthTag || "average" };
+//       sourceType = "image";
+//     }
+
+//     // 🔥 ALWAYS CLEAN DISK
+//     if (file && fs.existsSync(file.path)) fs.unlinkSync(file.path);
+
+//     const now = getISTDate();
+//     const date = toISODate(now);
+
+//     // ---------- UPSERT ----------
+//     await FoodEntry.updateOne(
+//       { userId, date },
+//       {
+//         $setOnInsert: {
+//           userId,
+//           date,
+//           year: now.getFullYear(),
+//           month: now.getMonth() + 1,
+//           day: now.getDate(),
+//         },
+//         $inc: {
+//           "totals.calories": nutrition.calories,
+//           "totals.protein": nutrition.protein,
+//           "totals.fat": nutrition.fat,
+//           "totals.carbs": nutrition.carbs,
+//           "totals.sugar": nutrition.sugar,
+//           "totals.calcium": nutrition.calcium,
+//           "totals.goodCalories": label.healthTag === "good_to_have" ? nutrition.calories : 0,
+//           "totals.badCalories": label.healthTag === "bad_to_have" ? nutrition.calories : 0,
+//           "totals.avgCalories": label.healthTag === "average" ? nutrition.calories : 0,
+//         },
+//         $push: {
+//           foodItems: {
+//             name,
+//             label: label.label,
+//             healthTag: label.healthTag,
+//             ...nutrition,
+//             sourceType,
+//             createdAt: now,
+//           },
+//         },
+//       },
+//       { upsert: true }
+//     );
+
+//     // ===============================
+//     // 🔑 FETCH UPDATED DATA (FIX)
+//     // ===============================
+//     const updatedDoc = await FoodEntry.findOne(
+//       { userId, date },
+//       { totals: 1, foodItems: { $slice: -1 } }
+//     ).lean();
+
+//     res.json({
+//       message: "Food added successfully",
+//       date,
+//       addedFood: updatedDoc?.foodItems?.[0] || null,
+//       totals: updatedDoc?.totals || {},
+//     });
+
+//   } catch (err) {
+//     if (file && fs.existsSync(file.path)) fs.unlinkSync(file.path);
+//     console.error(err);
+//     res.status(500).json({ error: err.message });
+//   }
+// });
 
 
 
 
 
 
+
+
+// // router.get("/today/:userId", async (req, res) => {
+// //   try {
+// //     const today = toISODate(getISTDate());
+// //     const { userId } = req.params;
+
+// //     // -------------------------------
+// //     // Fetch today's food entry
+// //     // -------------------------------
+// //     const doc = await FoodEntry.findOne({ userId, date: today }).lean();
+
+// //     // -------------------------------
+// //     // Fetch user profile
+// //     // -------------------------------
+// //     let userProfile = await UserProfile.findOne({ userId }).lean();
+
+// //     // -------------------------------
+// //     // showRegistered logic (UNCHANGED)
+// //     // -------------------------------
+// //     if (userProfile && userProfile.showRegistered === true) {
+// //       const requiredFields = [
+// //         "userId",
+// //         "name",
+// //         "mobileNumber",
+// //         "age",
+// //         "gender",
+// //         "weight",
+// //         "height",
+// //         "weightUnit",
+// //         "heightUnit",
+// //         "targetWeight",
+// //         "goal",
+// //         "physicalActivity",
+// //       ];
+
+// //       const allFieldsComplete = requiredFields.every((field) => {
+// //         const value = userProfile[field];
+// //         return value !== null && value !== undefined && value !== "";
+// //       });
+
+// //       if (allFieldsComplete) {
+// //         await UserProfile.updateOne(
+// //           { userId },
+// //           { $set: { showRegistered: false } }
+// //         );
+// //       }
+// //     }
+
+// //     // -------------------------------
+// //     // Profile-related data to send
+// //     // -------------------------------
+// //     const profileData = {
+// //       goal: userProfile?.goal || null,
+// //       name: userProfile?.name || null,
+
+// //       targetCalorie: userProfile?.targetCalorie || 0,
+// //       targetProtein: userProfile?.targetProtein || 0,
+
+// //       // ✅ ADDED: Surplus / Deficit fields
+// //       caloriesSurplus: userProfile?.caloriesSurplus || 0,
+// //       caloriesDeficit: userProfile?.caloriesDeficit || 0,
+// //       proteinSurplus: userProfile?.proteinSurplus || 0,
+// //       proteinDeficit: userProfile?.proteinDeficit || 0,
+
+// //       showRegistered: userProfile?.showRegistered ?? true,
+// //     };
+
+// //     // -------------------------------
+// //     // If food exists today
+// //     // -------------------------------
+// //     if (doc) {
+// //       return res.json({
+// //         date: today,
+// //         totals: doc.totals,
+// //         items: doc.foodItems || [],
+// //         ...profileData,
+// //         message: "Food eaten today",
+// //       });
+// //     }
+
+// //     // -------------------------------
+// //     // No food today → zero response
+// //     // -------------------------------
+// //     res.json({
+// //       date: today,
+// //       totals: {
+// //         calories: 0,
+// //         protein: 0,
+// //         fat: 0,
+// //         carbs: 0,
+// //         sugar: 0,
+// //         calcium: 0,
+// //         goodCalories: 0,
+// //         badCalories: 0,
+// //         avgCalories: 0,
+// //       },
+// //       items: [],
+// //       ...profileData,
+// //       message: "No food eaten today",
+// //     });
+
+// //   } catch (err) {
+// //     console.error("❌ Today API Error:", err);
+// //     res.status(500).json({ error: err.message });
+// //   }
+// // });
 
 // router.get("/today/:userId", async (req, res) => {
 //   try {
@@ -309,13 +725,16 @@ router.post("/addFood", upload.single("image"), async (req, res) => {
 //     // Profile-related data to send
 //     // -------------------------------
 //     const profileData = {
-//       goal: userProfile?.goal || null,
 //       name: userProfile?.name || null,
+//       goal: userProfile?.goal || null,
 
+//       // ✅ All Target Fields
 //       targetCalorie: userProfile?.targetCalorie || 0,
 //       targetProtein: userProfile?.targetProtein || 0,
+//       targetFat: userProfile?.targetFat || 0,
+//       targetCarb: userProfile?.targetCarb || 0,
 
-//       // ✅ ADDED: Surplus / Deficit fields
+//       // ✅ Surplus / Deficit
 //       caloriesSurplus: userProfile?.caloriesSurplus || 0,
 //       caloriesDeficit: userProfile?.caloriesDeficit || 0,
 //       proteinSurplus: userProfile?.proteinSurplus || 0,
@@ -363,269 +782,232 @@ router.post("/addFood", upload.single("image"), async (req, res) => {
 //     res.status(500).json({ error: err.message });
 //   }
 // });
+// router.get("/weekly/:userId", async (req, res) => {
+//   try {
+//     const { userId } = req.params;
+//     const today = getISTDate();
 
-router.get("/today/:userId", async (req, res) => {
-  try {
-    const today = toISODate(getISTDate());
-    const { userId } = req.params;
+//     // Build last 7 days
+//     const daysMeta = [];
+//     for (let i = 6; i >= 0; i--) {
+//       const d = new Date(today);
+//       d.setDate(today.getDate() - i);
 
-    // -------------------------------
-    // Fetch today's food entry
-    // -------------------------------
-    const doc = await FoodEntry.findOne({ userId, date: today }).lean();
+//       daysMeta.push({
+//         year: d.getFullYear(),
+//         month: d.getMonth() + 1,
+//         day: d.getDate(),
+//         iso: toISODate(d),
+//       });
+//     }
 
-    // -------------------------------
-    // Fetch user profile
-    // -------------------------------
-    let userProfile = await UserProfile.findOne({ userId }).lean();
+//     const docs = await FoodEntry.find({
+//       userId,
+//       $or: daysMeta.map(d => ({
+//         year: d.year,
+//         month: d.month,
+//         day: d.day,
+//       })),
+//     }).lean();
 
-    // -------------------------------
-    // showRegistered logic (UNCHANGED)
-    // -------------------------------
-    if (userProfile && userProfile.showRegistered === true) {
-      const requiredFields = [
-        "userId",
-        "name",
-        "mobileNumber",
-        "age",
-        "gender",
-        "weight",
-        "height",
-        "weightUnit",
-        "heightUnit",
-        "targetWeight",
-        "goal",
-        "physicalActivity",
-      ];
+//     const map = {};
+//     docs.forEach(d => {
+//       map[`${d.year}-${d.month}-${d.day}`] = d;
+//     });
 
-      const allFieldsComplete = requiredFields.every((field) => {
-        const value = userProfile[field];
-        return value !== null && value !== undefined && value !== "";
-      });
+//     const totals_range = {
+//       calories: 0,
+//       protein: 0,
+//       fat: 0,
+//       carbs: 0,
+//       sugar: 0,
+//       calcium: 0,
+//       goodCalories: 0,
+//       badCalories: 0,
+//     };
 
-      if (allFieldsComplete) {
-        await UserProfile.updateOne(
-          { userId },
-          { $set: { showRegistered: false } }
-        );
-      }
-    }
+//     let loggedDays = 0;
 
-    // -------------------------------
-    // Profile-related data to send
-    // -------------------------------
-    const profileData = {
-      name: userProfile?.name || null,
-      goal: userProfile?.goal || null,
+//     const days = daysMeta.map(d => {
+//       const key = `${d.year}-${d.month}-${d.day}`;
 
-      // ✅ All Target Fields
-      targetCalorie: userProfile?.targetCalorie || 0,
-      targetProtein: userProfile?.targetProtein || 0,
-      targetFat: userProfile?.targetFat || 0,
-      targetCarb: userProfile?.targetCarb || 0,
+//       if (map[key]) {
+//         const t = map[key].totals || {};
+//         loggedDays++;
 
-      // ✅ Surplus / Deficit
-      caloriesSurplus: userProfile?.caloriesSurplus || 0,
-      caloriesDeficit: userProfile?.caloriesDeficit || 0,
-      proteinSurplus: userProfile?.proteinSurplus || 0,
-      proteinDeficit: userProfile?.proteinDeficit || 0,
+//         totals_range.calories += t.calories || 0;
+//         totals_range.protein += t.protein || 0;
+//         totals_range.fat += t.fat || 0;
+//         totals_range.carbs += t.carbs || 0;
+//         totals_range.sugar += t.sugar || 0;
+//         totals_range.calcium += t.calcium || 0;
+//         totals_range.goodCalories += t.goodCalories || 0;
+//         totals_range.badCalories += t.badCalories || 0;
 
-      showRegistered: userProfile?.showRegistered ?? true,
-    };
+//         return {
+//           date: d.iso,
+//           totals: t,
+//           items: map[key].foodItems || [],
+//           message: "Food eaten",
+//         };
+//       }
 
-    // -------------------------------
-    // If food exists today
-    // -------------------------------
-    if (doc) {
-      return res.json({
-        date: today,
-        totals: doc.totals,
-        items: doc.foodItems || [],
-        ...profileData,
-        message: "Food eaten today",
-      });
-    }
+//       return {
+//         date: d.iso,
+//         totals: {
+//           calories: 0,
+//           protein: 0,
+//           fat: 0,
+//           carbs: 0,
+//           sugar: 0,
+//           calcium: 0,
+//           goodCalories: 0,
+//           badCalories: 0,
+//         },
+//         items: [],
+//         message: "No food eaten",
+//       };
+//     });
 
-    // -------------------------------
-    // No food today → zero response
-    // -------------------------------
-    res.json({
-      date: today,
-      totals: {
-        calories: 0,
-        protein: 0,
-        fat: 0,
-        carbs: 0,
-        sugar: 0,
-        calcium: 0,
-        goodCalories: 0,
-        badCalories: 0,
-        avgCalories: 0,
-      },
-      items: [],
-      ...profileData,
-      message: "No food eaten today",
-    });
+//     const totalDays = days.length;
+//     const missedDays = totalDays - loggedDays;
 
-  } catch (err) {
-    console.error("❌ Today API Error:", err);
-    res.status(500).json({ error: err.message });
-  }
-});
-router.get("/weekly/:userId", async (req, res) => {
-  try {
-    const { userId } = req.params;
-    const today = getISTDate();
+//     // ✅ NEW: averages object
+//     const averages = {
+//       calories: loggedDays ? Math.round(totals_range.calories / loggedDays) : 0,
+//       protein: loggedDays ? +(totals_range.protein / loggedDays).toFixed(1) : 0,
+//       fat: loggedDays ? +(totals_range.fat / loggedDays).toFixed(1) : 0,
+//       carbs: loggedDays ? +(totals_range.carbs / loggedDays).toFixed(1) : 0,
+//       sugar: loggedDays ? +(totals_range.sugar / loggedDays).toFixed(1) : 0,
+//       calcium: loggedDays ? +(totals_range.calcium / loggedDays).toFixed(1) : 0,
+//       goodCalories: loggedDays
+//         ? Math.round(totals_range.goodCalories / loggedDays)
+//         : 0,
+//       badCalories: loggedDays
+//         ? Math.round(totals_range.badCalories / loggedDays)
+//         : 0,
+//     };
 
-    // Build last 7 days
-    const daysMeta = [];
-    for (let i = 6; i >= 0; i--) {
-      const d = new Date(today);
-      d.setDate(today.getDate() - i);
-
-      daysMeta.push({
-        year: d.getFullYear(),
-        month: d.getMonth() + 1,
-        day: d.getDate(),
-        iso: toISODate(d),
-      });
-    }
-
-    const docs = await FoodEntry.find({
-      userId,
-      $or: daysMeta.map(d => ({
-        year: d.year,
-        month: d.month,
-        day: d.day,
-      })),
-    }).lean();
-
-    const map = {};
-    docs.forEach(d => {
-      map[`${d.year}-${d.month}-${d.day}`] = d;
-    });
-
-    const totals_range = {
-      calories: 0,
-      protein: 0,
-      fat: 0,
-      carbs: 0,
-      sugar: 0,
-      calcium: 0,
-      goodCalories: 0,
-      badCalories: 0,
-    };
-
-    let loggedDays = 0;
-
-    const days = daysMeta.map(d => {
-      const key = `${d.year}-${d.month}-${d.day}`;
-
-      if (map[key]) {
-        const t = map[key].totals || {};
-        loggedDays++;
-
-        totals_range.calories += t.calories || 0;
-        totals_range.protein += t.protein || 0;
-        totals_range.fat += t.fat || 0;
-        totals_range.carbs += t.carbs || 0;
-        totals_range.sugar += t.sugar || 0;
-        totals_range.calcium += t.calcium || 0;
-        totals_range.goodCalories += t.goodCalories || 0;
-        totals_range.badCalories += t.badCalories || 0;
-
-        return {
-          date: d.iso,
-          totals: t,
-          items: map[key].foodItems || [],
-          message: "Food eaten",
-        };
-      }
-
-      return {
-        date: d.iso,
-        totals: {
-          calories: 0,
-          protein: 0,
-          fat: 0,
-          carbs: 0,
-          sugar: 0,
-          calcium: 0,
-          goodCalories: 0,
-          badCalories: 0,
-        },
-        items: [],
-        message: "No food eaten",
-      };
-    });
-
-    const totalDays = days.length;
-    const missedDays = totalDays - loggedDays;
-
-    // ✅ NEW: averages object
-    const averages = {
-      calories: loggedDays ? Math.round(totals_range.calories / loggedDays) : 0,
-      protein: loggedDays ? +(totals_range.protein / loggedDays).toFixed(1) : 0,
-      fat: loggedDays ? +(totals_range.fat / loggedDays).toFixed(1) : 0,
-      carbs: loggedDays ? +(totals_range.carbs / loggedDays).toFixed(1) : 0,
-      sugar: loggedDays ? +(totals_range.sugar / loggedDays).toFixed(1) : 0,
-      calcium: loggedDays ? +(totals_range.calcium / loggedDays).toFixed(1) : 0,
-      goodCalories: loggedDays
-        ? Math.round(totals_range.goodCalories / loggedDays)
-        : 0,
-      badCalories: loggedDays
-        ? Math.round(totals_range.badCalories / loggedDays)
-        : 0,
-    };
-
-    res.json({
-      range: "last_7_days",
-      totalDays,
-      loggedDays,
-      missedDays,
-      totals_range,
-      averages, // 👈 THIS IS WHAT YOU WANTED
-      days,
-    });
-  } catch (err) {
-    console.error("Weekly error:", err);
-    res.status(500).json({ error: err.message });
-  }
-});
+//     res.json({
+//       range: "last_7_days",
+//       totalDays,
+//       loggedDays,
+//       missedDays,
+//       totals_range,
+//       averages, // 👈 THIS IS WHAT YOU WANTED
+//       days,
+//     });
+//   } catch (err) {
+//     console.error("Weekly error:", err);
+//     res.status(500).json({ error: err.message });
+//   }
+// });
 
 
  
 
 
-// Monthly
-// router.get("/monthly/:userId", async (req, res) => {
-//   try {
-//     const { userId } = req.params;
-//     const now = getISTDate();
+// // Monthly
+// // router.get("/monthly/:userId", async (req, res) => {
+// //   try {
+// //     const { userId } = req.params;
+// //     const now = getISTDate();
 
-//     const start = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2,"0")}-01`;
-//     const end = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2,"0")}-31`;
+// //     const start = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2,"0")}-01`;
+// //     const end = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2,"0")}-31`;
 
-//     const data = await FoodEntry.find({
-//       userId,
-//       date: { $gte: start, $lte: end },
-//     }).sort({ date: 1 });
+// //     const data = await FoodEntry.find({
+// //       userId,
+// //       date: { $gte: start, $lte: end },
+// //     }).sort({ date: 1 });
 
-//     res.json({
-//       count: data.length,
-//       days: data,
-//     });
-//   } catch (err) {
-//     res.status(500).json({ error: err.message });
-//   }
-// });
-// Monthly (year + month aware, zero-filled, IST-safe)
+// //     res.json({
+// //       count: data.length,
+// //       days: data,
+// //     });
+// //   } catch (err) {
+// //     res.status(500).json({ error: err.message });
+// //   }
+// // });
+// // Monthly (year + month aware, zero-filled, IST-safe)
+// // router.get("/monthly/:userId/:year/:month", async (req, res) => {
+// //   try {
+// //     const { userId, year, month } = req.params;
+
+// //     const y = Number(year);
+// //     const m = Number(month); // 1–12
+
+// //     if (m < 1 || m > 12) {
+// //       return res.status(400).json({ error: "Invalid month" });
+// //     }
+
+// //     const todayIST = getISTDate();
+// //     const isCurrentMonth =
+// //       y === todayIST.getFullYear() && m === todayIST.getMonth() + 1;
+
+// //     const lastDayOfMonth = new Date(y, m, 0).getDate();
+// //     const endDay = isCurrentMonth ? todayIST.getDate() : lastDayOfMonth;
+
+// //     // Fetch existing data
+// //     const docs = await FoodEntry.find({
+// //       userId,
+// //       year: y,
+// //       month: m,
+// //     }).lean();
+
+// //     // Build map by DAY (not date string)
+// //     const map = {};
+// //     docs.forEach(d => {
+// //       map[d.day] = d;
+// //     });
+
+// //     const days = [];
+
+// //     for (let day = 1; day <= endDay; day++) {
+// //       if (map[day]) {
+// //         days.push({
+// //           date: `${y}-${String(m).padStart(2, "0")}-${String(day).padStart(2, "0")}`,
+// //           totals: map[day].totals,
+// //           items: map[day].foodItems || [],
+// //           message: "Food eaten",
+// //         });
+// //       } else {
+// //         days.push({
+// //           date: `${y}-${String(m).padStart(2, "0")}-${String(day).padStart(2, "0")}`,
+// //           totals: {
+// //             calories: 0,
+// //             protein: 0,
+// //             fat: 0,
+// //             carbs: 0,
+// //             sugar: 0,
+// //             calcium: 0,
+// //             goodCalories: 0,
+// //             badCalories: 0,
+// //             avgCalories: 0,
+// //           },
+// //           items: [],
+// //           message: "No food eaten",
+// //         });
+// //       }
+// //     }
+
+// //     res.json({
+// //       year: y,
+// //       month: m,
+// //       daysCount: days.length,
+// //       days,
+// //     });
+// //   } catch (err) {
+// //     console.error("Monthly error:", err);
+// //     res.status(500).json({ error: err.message });
+// //   }
+// // });
 // router.get("/monthly/:userId/:year/:month", async (req, res) => {
 //   try {
 //     const { userId, year, month } = req.params;
 
 //     const y = Number(year);
-//     const m = Number(month); // 1–12
+//     const m = Number(month);
 
 //     if (m < 1 || m > 12) {
 //       return res.status(400).json({ error: "Invalid month" });
@@ -638,32 +1020,151 @@ router.get("/weekly/:userId", async (req, res) => {
 //     const lastDayOfMonth = new Date(y, m, 0).getDate();
 //     const endDay = isCurrentMonth ? todayIST.getDate() : lastDayOfMonth;
 
-//     // Fetch existing data
 //     const docs = await FoodEntry.find({
 //       userId,
 //       year: y,
 //       month: m,
 //     }).lean();
 
-//     // Build map by DAY (not date string)
 //     const map = {};
 //     docs.forEach(d => {
 //       map[d.day] = d;
 //     });
 
+//     const totals_range = {
+//       calories: 0,
+//       protein: 0,
+//       fat: 0,
+//       carbs: 0,
+//       sugar: 0,
+//       calcium: 0,
+//       goodCalories: 0,
+//       badCalories: 0,
+//     };
+
+//     let loggedDays = 0;
 //     const days = [];
 
 //     for (let day = 1; day <= endDay; day++) {
+//       const date = `${y}-${String(m).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+
 //       if (map[day]) {
+//         const t = map[day].totals || {};
+//         loggedDays++;
+
+//         totals_range.calories += t.calories || 0;
+//         totals_range.protein += t.protein || 0;
+//         totals_range.fat += t.fat || 0;
+//         totals_range.carbs += t.carbs || 0;
+//         totals_range.sugar += t.sugar || 0;
+//         totals_range.calcium += t.calcium || 0;
+//         totals_range.goodCalories += t.goodCalories || 0;
+//         totals_range.badCalories += t.badCalories || 0;
+
 //         days.push({
-//           date: `${y}-${String(m).padStart(2, "0")}-${String(day).padStart(2, "0")}`,
-//           totals: map[day].totals,
+//           date,
+//           totals: t,
 //           items: map[day].foodItems || [],
 //           message: "Food eaten",
 //         });
 //       } else {
 //         days.push({
-//           date: `${y}-${String(m).padStart(2, "0")}-${String(day).padStart(2, "0")}`,
+//           date,
+//           totals: {
+//             calories: 0,
+//             protein: 0,
+//             fat: 0,
+//             carbs: 0,
+//             sugar: 0,
+//             calcium: 0,
+//             goodCalories: 0,
+//             badCalories: 0,
+//           },
+//           items: [],
+//           message: "No food eaten",
+//         });
+//       }
+//     }
+
+//     const totalDays = days.length;
+//     const missedDays = totalDays - loggedDays;
+
+//     // ✅ NEW: averages for monthly
+//     const averages = {
+//       calories: loggedDays ? Math.round(totals_range.calories / loggedDays) : 0,
+//       protein: loggedDays ? +(totals_range.protein / loggedDays).toFixed(1) : 0,
+//       fat: loggedDays ? +(totals_range.fat / loggedDays).toFixed(1) : 0,
+//       carbs: loggedDays ? +(totals_range.carbs / loggedDays).toFixed(1) : 0,
+//       sugar: loggedDays ? +(totals_range.sugar / loggedDays).toFixed(1) : 0,
+//       calcium: loggedDays ? +(totals_range.calcium / loggedDays).toFixed(1) : 0,
+//       goodCalories: loggedDays
+//         ? Math.round(totals_range.goodCalories / loggedDays)
+//         : 0,
+//       badCalories: loggedDays
+//         ? Math.round(totals_range.badCalories / loggedDays)
+//         : 0,
+//     };
+
+//     res.json({
+//       year: y,
+//       month: m,
+//       totalDays,
+//       loggedDays,
+//       missedDays,
+//       totals_range,
+//       averages, // 👈 same as weekly
+//       days,
+//     });
+//   } catch (err) {
+//     console.error("Monthly error:", err);
+//     res.status(500).json({ error: err.message });
+//   }
+// });
+
+
+
+// router.post("/range", async (req, res) => {
+//   try {
+//     const { userId, startDate, endDate } = req.body;
+//     if (!userId || !startDate || !endDate) {
+//       return res.status(400).json({ error: "userId, startDate, endDate required" });
+//     }
+
+//     // 1️⃣ Fetch existing data
+//     const docs = await FoodEntry.find({
+//       userId,
+//       date: { $gte: startDate, $lte: endDate },
+//     }).lean();
+
+//     // 2️⃣ Build map: date -> doc
+//     const map = {};
+//     docs.forEach(d => {
+//       map[d.date] = d;
+//     });
+
+//     // 3️⃣ Generate full date range
+//     const results = [];
+//     let cursor = new Date(startDate);
+//     const end = new Date(endDate);
+
+//     while (cursor <= end) {
+//       const y = cursor.getFullYear();
+//       const m = String(cursor.getMonth() + 1).padStart(2, "0");
+//       const d = String(cursor.getDate()).padStart(2, "0");
+//       const iso = `${y}-${m}-${d}`;
+
+//       if (map[iso]) {
+//         // existing day
+//         results.push({
+//           date: iso,
+//           totals: map[iso].totals,
+//           items: map[iso].foodItems || [],
+//           message: "Food eaten",
+//         });
+//       } else {
+//         // missing day → zero
+//         results.push({
+//           date: iso,
 //           totals: {
 //             calories: 0,
 //             protein: 0,
@@ -679,266 +1180,75 @@ router.get("/weekly/:userId", async (req, res) => {
 //           message: "No food eaten",
 //         });
 //       }
+
+//       cursor.setDate(cursor.getDate() + 1);
 //     }
 
 //     res.json({
-//       year: y,
-//       month: m,
-//       daysCount: days.length,
-//       days,
+//       userId,
+//       from: startDate,
+//       to: endDate,
+//       daysCount: results.length,
+//       days: results,
 //     });
+
 //   } catch (err) {
-//     console.error("Monthly error:", err);
+//     console.error("Range error:", err);
 //     res.status(500).json({ error: err.message });
 //   }
 // });
-router.get("/monthly/:userId/:year/:month", async (req, res) => {
-  try {
-    const { userId, year, month } = req.params;
 
-    const y = Number(year);
-    const m = Number(month);
+// router.get("/recent/:userId", async (req, res) => {
+//   const items = await FoodEntry.aggregate([
+//     { $match: { userId: req.params.userId } },
+//     { $unwind: "$foodItems" },
+//     { $sort: { "foodItems.createdAt": -1 } },
+//     { $limit: 10 },
+//     { $replaceRoot: { newRoot: "$foodItems" } },
+//   ]);
 
-    if (m < 1 || m > 12) {
-      return res.status(400).json({ error: "Invalid month" });
-    }
+//   res.json({ recent: items });
+// });
 
-    const todayIST = getISTDate();
-    const isCurrentMonth =
-      y === todayIST.getFullYear() && m === todayIST.getMonth() + 1;
+// // Yearly
+// router.get("/yearly/:userId/:year", async (req, res) => {
+//   try {
+//     const { userId, year } = req.params;
 
-    const lastDayOfMonth = new Date(y, m, 0).getDate();
-    const endDay = isCurrentMonth ? todayIST.getDate() : lastDayOfMonth;
+//     const data = await FoodEntry.aggregate([
+//       {
+//         $match: {
+//           userId,
+//           year: Number(year),
+//         },
+//       },
+//       {
+//         $group: {
+//           _id: "$month",
+//           calories: { $sum: "$totals.calories" },
+//           protein: { $sum: "$totals.protein" },
+//           fat: { $sum: "$totals.fat" },
+//           carbs: { $sum: "$totals.carbs" },
+//         },
+//       },
+//       { $sort: { _id: 1 } },
+//     ]);
 
-    const docs = await FoodEntry.find({
-      userId,
-      year: y,
-      month: m,
-    }).lean();
-
-    const map = {};
-    docs.forEach(d => {
-      map[d.day] = d;
-    });
-
-    const totals_range = {
-      calories: 0,
-      protein: 0,
-      fat: 0,
-      carbs: 0,
-      sugar: 0,
-      calcium: 0,
-      goodCalories: 0,
-      badCalories: 0,
-    };
-
-    let loggedDays = 0;
-    const days = [];
-
-    for (let day = 1; day <= endDay; day++) {
-      const date = `${y}-${String(m).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-
-      if (map[day]) {
-        const t = map[day].totals || {};
-        loggedDays++;
-
-        totals_range.calories += t.calories || 0;
-        totals_range.protein += t.protein || 0;
-        totals_range.fat += t.fat || 0;
-        totals_range.carbs += t.carbs || 0;
-        totals_range.sugar += t.sugar || 0;
-        totals_range.calcium += t.calcium || 0;
-        totals_range.goodCalories += t.goodCalories || 0;
-        totals_range.badCalories += t.badCalories || 0;
-
-        days.push({
-          date,
-          totals: t,
-          items: map[day].foodItems || [],
-          message: "Food eaten",
-        });
-      } else {
-        days.push({
-          date,
-          totals: {
-            calories: 0,
-            protein: 0,
-            fat: 0,
-            carbs: 0,
-            sugar: 0,
-            calcium: 0,
-            goodCalories: 0,
-            badCalories: 0,
-          },
-          items: [],
-          message: "No food eaten",
-        });
-      }
-    }
-
-    const totalDays = days.length;
-    const missedDays = totalDays - loggedDays;
-
-    // ✅ NEW: averages for monthly
-    const averages = {
-      calories: loggedDays ? Math.round(totals_range.calories / loggedDays) : 0,
-      protein: loggedDays ? +(totals_range.protein / loggedDays).toFixed(1) : 0,
-      fat: loggedDays ? +(totals_range.fat / loggedDays).toFixed(1) : 0,
-      carbs: loggedDays ? +(totals_range.carbs / loggedDays).toFixed(1) : 0,
-      sugar: loggedDays ? +(totals_range.sugar / loggedDays).toFixed(1) : 0,
-      calcium: loggedDays ? +(totals_range.calcium / loggedDays).toFixed(1) : 0,
-      goodCalories: loggedDays
-        ? Math.round(totals_range.goodCalories / loggedDays)
-        : 0,
-      badCalories: loggedDays
-        ? Math.round(totals_range.badCalories / loggedDays)
-        : 0,
-    };
-
-    res.json({
-      year: y,
-      month: m,
-      totalDays,
-      loggedDays,
-      missedDays,
-      totals_range,
-      averages, // 👈 same as weekly
-      days,
-    });
-  } catch (err) {
-    console.error("Monthly error:", err);
-    res.status(500).json({ error: err.message });
-  }
-});
+//     res.json({
+//       year: Number(year),
+//       months: data.map((m) => ({
+//         month: m._id,
+//         calories: m.calories,
+//         protein: m.protein,
+//         fat: m.fat,
+//         carbs: m.carbs,
+//       })),
+//     });
+//   } catch (err) {
+//     console.error("Yearly error:", err);
+//     res.status(500).json({ error: err.message });
+//   }
+// });
 
 
-
-router.post("/range", async (req, res) => {
-  try {
-    const { userId, startDate, endDate } = req.body;
-    if (!userId || !startDate || !endDate) {
-      return res.status(400).json({ error: "userId, startDate, endDate required" });
-    }
-
-    // 1️⃣ Fetch existing data
-    const docs = await FoodEntry.find({
-      userId,
-      date: { $gte: startDate, $lte: endDate },
-    }).lean();
-
-    // 2️⃣ Build map: date -> doc
-    const map = {};
-    docs.forEach(d => {
-      map[d.date] = d;
-    });
-
-    // 3️⃣ Generate full date range
-    const results = [];
-    let cursor = new Date(startDate);
-    const end = new Date(endDate);
-
-    while (cursor <= end) {
-      const y = cursor.getFullYear();
-      const m = String(cursor.getMonth() + 1).padStart(2, "0");
-      const d = String(cursor.getDate()).padStart(2, "0");
-      const iso = `${y}-${m}-${d}`;
-
-      if (map[iso]) {
-        // existing day
-        results.push({
-          date: iso,
-          totals: map[iso].totals,
-          items: map[iso].foodItems || [],
-          message: "Food eaten",
-        });
-      } else {
-        // missing day → zero
-        results.push({
-          date: iso,
-          totals: {
-            calories: 0,
-            protein: 0,
-            fat: 0,
-            carbs: 0,
-            sugar: 0,
-            calcium: 0,
-            goodCalories: 0,
-            badCalories: 0,
-            avgCalories: 0,
-          },
-          items: [],
-          message: "No food eaten",
-        });
-      }
-
-      cursor.setDate(cursor.getDate() + 1);
-    }
-
-    res.json({
-      userId,
-      from: startDate,
-      to: endDate,
-      daysCount: results.length,
-      days: results,
-    });
-
-  } catch (err) {
-    console.error("Range error:", err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-router.get("/recent/:userId", async (req, res) => {
-  const items = await FoodEntry.aggregate([
-    { $match: { userId: req.params.userId } },
-    { $unwind: "$foodItems" },
-    { $sort: { "foodItems.createdAt": -1 } },
-    { $limit: 10 },
-    { $replaceRoot: { newRoot: "$foodItems" } },
-  ]);
-
-  res.json({ recent: items });
-});
-
-// Yearly
-router.get("/yearly/:userId/:year", async (req, res) => {
-  try {
-    const { userId, year } = req.params;
-
-    const data = await FoodEntry.aggregate([
-      {
-        $match: {
-          userId,
-          year: Number(year),
-        },
-      },
-      {
-        $group: {
-          _id: "$month",
-          calories: { $sum: "$totals.calories" },
-          protein: { $sum: "$totals.protein" },
-          fat: { $sum: "$totals.fat" },
-          carbs: { $sum: "$totals.carbs" },
-        },
-      },
-      { $sort: { _id: 1 } },
-    ]);
-
-    res.json({
-      year: Number(year),
-      months: data.map((m) => ({
-        month: m._id,
-        calories: m.calories,
-        protein: m.protein,
-        fat: m.fat,
-        carbs: m.carbs,
-      })),
-    });
-  } catch (err) {
-    console.error("Yearly error:", err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-
-module.exports = router;
+// module.exports = router;
