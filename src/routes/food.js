@@ -95,7 +95,7 @@ async function askAIForImageNutrition(imagePath) {
 You are a professional nutrition expert.
 
 STRICT RULES:
-- Identify food ONLY if confidence >= 90%
+- Identify food ONLY if confidence >= 80%
 - If unsure → DO NOT GUESS → return "Unidentified food"
 - NEVER hallucinate
 - ALWAYS assume MINIMUM quantity
